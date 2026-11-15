@@ -87,7 +87,18 @@ class SynthesisWorker(QThread):
 
                 out_wav = project.segments_dir / f"block_{block.id:04d}.wav"
                 try:
-                    engine.synthesize_to_wav(block.text, out_wav, voice_cfg)
+                    block_voice_cfg = project.get_voice_config_for_block(block)
+                    if block_voice_cfg.get("key", "").startswith("clone_"):
+                        from app.clone.engine import VoiceCloningEngine
+                        clone_engine = VoiceCloningEngine()
+                        clone_engine.synthesize_cloned(
+                            block.text,
+                            clone_id=block_voice_cfg["key"],
+                            output_path=out_wav,
+                            speed=block_voice_cfg.get("speed", 1.0),
+                        )
+                    else:
+                        engine.synthesize_to_wav(block.text, out_wav, block_voice_cfg)
                     info = validate_wav_file(out_wav)
                     block.audio_file = str(out_wav.relative_to(project.project_dir))
                     block.duration = info["duration"]

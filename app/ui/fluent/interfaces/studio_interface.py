@@ -118,7 +118,15 @@ class StudioInterface(QWidget):
         settings_layout.addWidget(lbl_head)
 
         # Voice Selector
-        settings_layout.addWidget(CaptionLabel("Speaker Voice:", self))
+        v_head_row = QHBoxLayout()
+        v_head_row.addWidget(CaptionLabel("Speaker Voice:", self))
+        v_head_row.addStretch()
+        self.btn_clone_voice = PushButton(FluentIcon.MICROPHONE, "Clone", self)
+        self.btn_clone_voice.setToolTip("Clone a new AI voice profile from 5-10s audio (100% Offline CPU)")
+        self.btn_clone_voice.clicked.connect(self._open_clone_dialog)
+        v_head_row.addWidget(self.btn_clone_voice)
+        settings_layout.addLayout(v_head_row)
+
         self.combo_voices = ComboBox(self)
         settings_layout.addWidget(self.combo_voices)
 
@@ -144,10 +152,16 @@ class StudioInterface(QWidget):
         settings_layout.addWidget(self.lbl_pause)
         settings_layout.addWidget(self.slider_pause)
 
-        # Format
+        # Format (All 7 Production Formats)
         settings_layout.addWidget(CaptionLabel("Master Format:", self))
         self.combo_format = ComboBox(self)
-        self.combo_format.addItems(["WAV (Lossless)", "MP3 (192 kbps)"])
+        self.combo_format.addItem("WAV (Lossless Master)", userData="wav")
+        self.combo_format.addItem("MP3 (192 kbps Universal)", userData="mp3")
+        self.combo_format.addItem("FLAC (Lossless Compressed)", userData="flac")
+        self.combo_format.addItem("M4B Audiobook (Chapters)", userData="m4b")
+        self.combo_format.addItem("🎬 Audiogram Video (1080p MP4)", userData="audiogram")
+        self.combo_format.addItem("📜 Synchronized Subtitles (.SRT)", userData="srt")
+        self.combo_format.addItem("🌐 WebVTT Subtitles (.VTT)", userData="vtt")
         settings_layout.addWidget(self.combo_format)
 
         # Mastering FX Preset
@@ -219,12 +233,19 @@ class StudioInterface(QWidget):
         voices = list_local_voices()
         sorted_voices = sorted(
             voices,
-            key=lambda x: (not x.get("language", "").startswith("hi"), x.get("name", "")),
+            key=lambda x: (
+                not x.get("is_clone", False),
+                not x.get("language", "").startswith("hi"),
+                x.get("name", ""),
+            ),
         )
         for v in sorted_voices:
             lang = v.get("language", "en")
-            flag = "🇮🇳" if lang.startswith("hi") else "🇺🇸"
-            self.combo_voices.addItem(f"{flag} {v['name']} ({lang})", userData=v["key"])
+            if v.get("is_clone"):
+                self.combo_voices.addItem(f"{v['name']} ({lang})", userData=v["key"])
+            else:
+                flag = "🇮🇳" if lang.startswith("hi") else "🇺🇸"
+                self.combo_voices.addItem(f"{flag} {v['name']} ({lang})", userData=v["key"])
 
         if not voices:
             self.combo_voices.addItem("No voice installed (Visit Gallery)", userData=None)
@@ -323,6 +344,19 @@ class StudioInterface(QWidget):
         dialog.rules_updated.connect(self._update_metrics)
         dialog.exec()
 
+    def _open_clone_dialog(self):
+        from app.ui.fluent.clone_dialog import CloneVoiceDialog
+
+        dialog = CloneVoiceDialog(parent=self.window())
+        dialog.voice_cloned.connect(lambda cid: (self._populate_voices(), self._select_voice_by_key(cid)))
+        dialog.exec()
+
+    def _select_voice_by_key(self, voice_key: str):
+        for i in range(self.combo_voices.count()):
+            if self.combo_voices.itemData(i) == voice_key:
+                self.combo_voices.setCurrentIndex(i)
+                break
+
     def _test_voice(self):
         voice_key = self.combo_voices.currentData()
         if not voice_key:
@@ -345,6 +379,23 @@ class StudioInterface(QWidget):
             if voice_key.startswith("hi")
             else "Hello! This is a real-time sample of the selected voice."
         )
+
+        if voice_key.startswith("clone_"):
+            try:
+                from app.clone.engine import VoiceCloningEngine
+                engine = VoiceCloningEngine()
+                engine.synthesize_cloned(sample_text, voice_key, test_wav, speed=speed)
+                self.test_voice_requested.emit(str(test_wav), f"Sample: {voice_key}")
+                InfoBar.success(
+                    title="Voice Preview Ready 🎧",
+                    content=f"Playing cloned sample for {voice_key}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                )
+                return
+            except Exception as e:
+                InfoBar.error(title="Test Failed", content=str(e), parent=self, position=InfoBarPosition.TOP)
+                return
 
         try:
             engine = PiperTTSEngine()
@@ -373,7 +424,7 @@ class StudioInterface(QWidget):
         project_name = self.txt_title.text().strip() or "Untitled Story"
         speed = self.slider_speed.value() / 100.0
         pause_ms = self.slider_pause.value()
-        fmt = "mp3" if "MP3" in self.combo_format.currentText() else "wav"
+        fmt = self.combo_format.currentData() or "wav"
         norm = self.switch_loudnorm.isChecked()
         preset_key = self.combo_preset.currentData() or "crisp_clean"
         room_tone = self.switch_room_tone.isChecked()

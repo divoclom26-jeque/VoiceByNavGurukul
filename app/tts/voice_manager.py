@@ -47,7 +47,10 @@ def get_remote_voices_catalog(force_refresh: bool = False) -> Dict[str, Any]:
     return catalog
 
 
-def list_local_voices(voices_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
+def list_local_voices(
+    voices_dir: Optional[Path] = None,
+    include_clones: bool = True,
+) -> List[Dict[str, Any]]:
     """Scan the local voices directory and return all installed models."""
     target_dir = voices_dir or VOICES_DIR
     if not target_dir.is_dir():
@@ -90,7 +93,30 @@ def list_local_voices(voices_dir: Optional[Path] = None) -> List[Dict[str, Any]]
             "num_speakers": num_speakers,
             "speakers": list(speaker_id_map.keys()) if speaker_id_map else ["default"],
             "size_mb": round(onnx_file.stat().st_size / (1024 * 1024), 2),
+            "is_clone": False,
         })
+
+    # Load any custom local cloned voice profiles if requested
+    if include_clones:
+        try:
+            from app.clone.profile import CloneManager
+            clones = CloneManager().list_clones()
+            for c in clones:
+                installed_voices.append({
+                    "key": c.id,
+                    "name": f"✨ {c.name}",
+                    "language": c.language,
+                    "model_path": str(c.full_reference_path),
+                    "config_path": str(c.clone_dir / "profile.json"),
+                    "sample_rate": 22050,
+                    "num_speakers": 1,
+                    "speakers": ["cloned"],
+                    "size_mb": 0.2,
+                    "is_clone": True,
+                    "base_voice_key": c.base_voice_key,
+                })
+        except Exception as e:
+            logger.debug("Could not load cloned voices: %s", e)
 
     return installed_voices
 

@@ -209,7 +209,17 @@ class Project:
 
         out_wav = self.segments_dir / f"block_{target_block.id:04d}.wav"
         try:
-            active_engine.synthesize_to_wav(target_block.text, out_wav, voice_cfg)
+            if voice_cfg.get("key", "").startswith("clone_"):
+                from app.clone.engine import VoiceCloningEngine
+                clone_engine = VoiceCloningEngine()
+                clone_engine.synthesize_cloned(
+                    target_block.text,
+                    clone_id=voice_cfg["key"],
+                    output_path=out_wav,
+                    speed=voice_cfg.get("speed", 1.0),
+                )
+            else:
+                active_engine.synthesize_to_wav(target_block.text, out_wav, voice_cfg)
             info = validate_wav_file(out_wav)
             target_block.audio_file = str(out_wav.relative_to(self.project_dir))
             target_block.duration = info["duration"]
@@ -249,7 +259,17 @@ class Project:
             active_engine = engine or (kokoro_engine if voice_cfg.get("engine") == "kokoro" else piper_engine)
 
             try:
-                active_engine.synthesize_to_wav(block.text, out_wav, voice_cfg)
+                if voice_cfg.get("key", "").startswith("clone_"):
+                    from app.clone.engine import VoiceCloningEngine
+                    clone_engine = VoiceCloningEngine()
+                    clone_engine.synthesize_cloned(
+                        block.text,
+                        clone_id=voice_cfg["key"],
+                        output_path=out_wav,
+                        speed=voice_cfg.get("speed", 1.0),
+                    )
+                else:
+                    active_engine.synthesize_to_wav(block.text, out_wav, voice_cfg)
                 info = validate_wav_file(out_wav)
                 block.audio_file = str(out_wav.relative_to(self.project_dir))
                 block.duration = info["duration"]
@@ -333,7 +353,8 @@ class Project:
         self.update_timings(default_pause_ms=pause_ms)
 
         # 4. Export to requested format
-        if output_format.lower() == "mp3":
+        fmt = output_format.lower().strip()
+        if fmt == "mp3":
             final_mp3 = self.exports_dir / f"{self.name}_master.mp3"
             pipeline.export_to_mp3(
                 final_master_wav,
@@ -342,6 +363,39 @@ class Project:
                 metadata={"title": self.name, "comment": "Created with Local Voice Engine Studio"},
             )
             return final_mp3
+        elif fmt == "flac":
+            final_flac = self.exports_dir / f"{self.name}_master.flac"
+            pipeline.export_to_flac(
+                final_master_wav,
+                final_flac,
+                metadata={"title": self.name, "comment": "Created with Local Voice Engine Studio"},
+            )
+            return final_flac
+        elif fmt == "m4b":
+            final_m4b = self.exports_dir / f"{self.name}_master.m4b"
+            chapters = []
+            cur_ms = 0
+            for i, b in enumerate(self.blocks):
+                dur_ms = int(b.duration * 1000)
+                chapters.append({
+                    "start_ms": cur_ms,
+                    "end_ms": cur_ms + dur_ms,
+                    "title": f"Chapter {i+1}: {b.text[:30]}",
+                })
+                cur_ms += dur_ms + pause_ms
+            pipeline.export_to_m4b(
+                final_master_wav,
+                final_m4b,
+                metadata={"title": self.name, "comment": "Created with Local Voice Engine Studio"},
+                chapters=chapters,
+            )
+            return final_m4b
+        elif "audiogram" in fmt or fmt == "mp4":
+            return self.export_audiogram(aspect_ratio="square", pipeline=pipeline)
+        elif fmt == "srt":
+            return self.export_subtitles(format="srt")
+        elif fmt == "vtt":
+            return self.export_subtitles(format="vtt")
 
         return final_master_wav
 

@@ -15,6 +15,7 @@ from qfluentwidgets import (
     FluentIcon,
     InfoBar,
     InfoBarPosition,
+    PrimaryPushButton,
     ProgressBar,
     PushButton,
     SearchLineEdit,
@@ -67,6 +68,12 @@ class GalleryInterface(QWidget):
         self.btn_refresh = PushButton(FluentIcon.SYNC, "Refresh", self)
         self.btn_refresh.clicked.connect(self._load_catalog)
         top_row.addWidget(self.btn_refresh)
+
+        self.btn_clone = PrimaryPushButton(FluentIcon.MICROPHONE, "Clone Voice", self)
+        self.btn_clone.setToolTip("Create a custom AI voice clone from 5-10s audio (100% Offline CPU)")
+        self.btn_clone.clicked.connect(self._open_clone_dialog)
+        top_row.addWidget(self.btn_clone)
+
         c_layout.addLayout(top_row)
 
         # Download progress
@@ -180,3 +187,10 @@ class GalleryInterface(QWidget):
         self.progress_bar.setVisible(False)
         self.lbl_status.setVisible(False)
         InfoBar.error(title="Download Error", content=err, parent=self)
+
+    def _open_clone_dialog(self):
+        from app.ui.fluent.clone_dialog import CloneVoiceDialog
+
+        dlg = CloneVoiceDialog(parent=self.window())
+        dlg.voice_cloned.connect(lambda clone_id: self.voice_installed.emit(clone_id))
+        dlg.exec()
