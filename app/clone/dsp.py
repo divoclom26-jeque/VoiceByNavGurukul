@@ -239,6 +239,8 @@ class AudioDSP:
         """Estimate median fundamental pitch (F0 in Hz) using autocorrelation across voiced speech frames."""
         if len(audio) == 0:
             return 140.0
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
 
         # Resample to 16kHz for uniform, robust pitch tracking
         if sr != 16000:
@@ -325,6 +327,8 @@ class AudioDSP:
     @classmethod
     def pitch_shift_sola(cls, audio: np.ndarray, semitones: float, sr: int = 22050) -> np.ndarray:
         """High-Fidelity Synchronous Overlap-Add (SOLA) pitch shifting without phase smearing or metallic artifacts."""
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
         if abs(semitones) < 0.15 or len(audio) < 1024:
             return audio
 
@@ -384,6 +388,8 @@ class AudioDSP:
     @classmethod
     def vtln_warp_spectrum(cls, audio: np.ndarray, alpha: float, sr: int = 22050, n_fft: int = 1024, hop: int = 256) -> np.ndarray:
         """Vocal Tract Length Normalization (VTLN) frequency axis warping to adapt vowel formant positions."""
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
         if abs(alpha - 1.0) < 0.02 or len(audio) < n_fft:
             return audio
 
@@ -425,6 +431,8 @@ class AudioDSP:
         smoothing_sigma: float = 6.0,
     ) -> np.ndarray:
         """Extract a smooth vocal-tract spectral envelope from voiced frames."""
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
         if len(audio) < n_fft:
             return np.ones(n_fft // 2 + 1, dtype=np.float32)
 
@@ -458,6 +466,8 @@ class AudioDSP:
         strength: float = 0.85,
     ) -> np.ndarray:
         """Reshape source audio harmonics to match target speaker's vocal tract envelope."""
+        if source_audio.ndim > 1:
+            source_audio = np.mean(source_audio, axis=1)
         if len(source_audio) < n_fft or len(target_env) != len(source_env):
             return source_audio
 

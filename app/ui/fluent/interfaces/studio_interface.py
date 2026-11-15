@@ -349,6 +349,7 @@ class StudioInterface(QWidget):
 
         dialog = CloneVoiceDialog(parent=self.window())
         dialog.voice_cloned.connect(lambda cid: (self._populate_voices(), self._select_voice_by_key(cid)))
+        dialog.preview_requested.connect(lambda path, title: self.test_voice_requested.emit(path, title))
         dialog.exec()
 
     def _select_voice_by_key(self, voice_key: str):

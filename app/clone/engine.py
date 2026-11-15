@@ -144,7 +144,7 @@ class VoiceCloningEngine:
         # High-Fidelity Formant & Pitch Transfer DSP
         # 1. Pitch shift using SOLA cross-correlation (zero phase smearing)
         if abs(pitch_shift_semitones) > 0.15:
-            audio = AudioDSP.pitch_shift_pv(audio, pitch_shift_semitones, sr=sr)
+            audio = AudioDSP.pitch_shift_sola(audio, pitch_shift_semitones, sr=sr)
             # 2. Vocal Tract Length Normalization (VTLN) to scale vowel formants with pitch
             vtln_alpha = float(np.clip(2.0 ** ((pitch_shift_semitones / 12.0) * 0.35), 0.85, 1.20))
             if abs(vtln_alpha - 1.0) > 0.02:

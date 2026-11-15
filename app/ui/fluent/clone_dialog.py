@@ -1,7 +1,10 @@
 import logging
 from pathlib import Path
+import re
 import tempfile
 from typing import List, Optional
+
+import numpy as np
 
 from PySide6.QtCore import QTime, QTimer, QUrl, Qt, Signal
 from PySide6.QtMultimedia import (
@@ -68,9 +71,8 @@ class CloneVoiceDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Clone AI Voice Profile")
-        self.setMinimumSize(560, 480)
-        self.resize(680, 620)
-        self.setSizeGripEnabled(True)
+        self.setFixedSize(620, 560)
+        self.setSizeGripEnabled(False)
 
         self.clone_manager = CloneManager()
         self.cloning_engine = VoiceCloningEngine()
@@ -117,6 +119,7 @@ class CloneVoiceDialog(QDialog):
 
         self.recorder.recorderStateChanged.connect(self._on_recorder_state_changed)
         self.recorder.durationChanged.connect(self._on_recorder_duration_changed)
+        self.recorder.errorOccurred.connect(self._on_recorder_error)
 
     def _init_playback_engine(self):
         """Setup playback engine for previewing recorded sample."""
@@ -127,95 +130,95 @@ class CloneVoiceDialog(QDialog):
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(20, 16, 20, 16)
+        main_layout.setSpacing(10)
 
-        # Scrollable Content Area for 100% responsive fluid scaling
-        self.scroll_area = SmoothScrollArea(self)
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-
-        scroll_widget = QWidget()
-        content_layout = QVBoxLayout(scroll_widget)
-        content_layout.setContentsMargins(24, 20, 24, 12)
-        content_layout.setSpacing(12)
-
-        # Header
+        # Header (Compact)
         head_row = QHBoxLayout()
-        icon_lbl = SubtitleLabel("🎙️ Clone AI Voice Profile", scroll_widget)
+        icon_lbl = SubtitleLabel("🎙️ Clone AI Voice Profile", self)
         head_row.addWidget(icon_lbl)
         head_row.addStretch()
-        badge = CaptionLabel("100% Offline · Zero GPU", scroll_widget)
+        badge = CaptionLabel("100% Offline · Zero GPU", self)
         badge.setStyleSheet(
             "color: #0284C7; font-weight: 600; background: rgba(2, 132, 199, 0.1); padding: 4px 8px; border-radius: 4px;"
         )
         head_row.addWidget(badge)
-        content_layout.addLayout(head_row)
+        main_layout.addLayout(head_row)
 
-        desc = BodyLabel(
-            "Record your voice directly from your mic or upload an audio file (5-15 seconds).\n"
-            "Runs purely on your CPU with hardware AVX-512 acceleration. Your voice data stays 100% private.",
-            scroll_widget,
+        desc = CaptionLabel(
+            "Record 5-15s from your mic or upload an audio sample. Runs on CPU with hardware AVX-512 acceleration.",
+            self,
         )
-        desc.setStyleSheet("color: #64748B; font-size: 13px;")
-        content_layout.addWidget(desc)
+        desc.setStyleSheet("color: #64748B;")
+        main_layout.addWidget(desc)
 
         # Voice Settings Card
-        settings_card = CardWidget(scroll_widget)
+        settings_card = CardWidget(self)
         card_layout = QVBoxLayout(settings_card)
-        card_layout.setContentsMargins(16, 14, 16, 14)
-        card_layout.setSpacing(10)
+        card_layout.setContentsMargins(14, 10, 14, 10)
+        card_layout.setSpacing(8)
 
-        card_layout.addWidget(CaptionLabel("Voice Profile Name:", self))
+        # Row 1: Profile Name & Language
+        row_name_lang = QHBoxLayout()
+        row_name_lang.setSpacing(12)
+
+        col_name = QVBoxLayout()
+        col_name.setSpacing(3)
+        col_name.addWidget(CaptionLabel("Voice Profile Name:", self))
         self.txt_name = LineEdit(self)
-        self.txt_name.setPlaceholderText("e.g. My Personal Voice, Rahul Narrator...")
+        self.txt_name.setPlaceholderText("e.g. My Cloned Voice")
         self.txt_name.setText("My Cloned Voice")
-        card_layout.addWidget(self.txt_name)
-
-        row_meta = QHBoxLayout()
-        row_meta.setSpacing(12)
+        col_name.addWidget(self.txt_name)
+        row_name_lang.addLayout(col_name, stretch=3)
 
         col_lang = QVBoxLayout()
+        col_lang.setSpacing(3)
         col_lang.addWidget(CaptionLabel("Primary Language:", self))
         self.combo_lang = ComboBox(self)
         self.combo_lang.addItem("🇮🇳 Hindi (hi_IN)", userData="hi_IN")
         self.combo_lang.addItem("🇺🇸 English (en_US)", userData="en_US")
         self.combo_lang.currentIndexChanged.connect(self._on_language_changed)
         col_lang.addWidget(self.combo_lang)
-        row_meta.addLayout(col_lang, stretch=1)
+        row_name_lang.addLayout(col_lang, stretch=2)
+
+        card_layout.addLayout(row_name_lang)
+
+        # Row 2: Base Acoustic Model & Pitch Shift Slider
+        row_base_pitch = QHBoxLayout()
+        row_base_pitch.setSpacing(12)
 
         col_base = QVBoxLayout()
+        col_base.setSpacing(3)
         col_base.addWidget(CaptionLabel("Base Acoustic Model:", self))
         self.combo_base_voice = ComboBox(self)
         col_base.addWidget(self.combo_base_voice)
-        row_meta.addLayout(col_base, stretch=1)
-        card_layout.addLayout(row_meta)
+        row_base_pitch.addLayout(col_base, stretch=3)
 
-        # Acoustic Voice Tuning (Pitch Shift)
-        card_layout.addSpacing(4)
-        pitch_box = QVBoxLayout()
+        col_pitch = QVBoxLayout()
+        col_pitch.setSpacing(3)
         pitch_header = QHBoxLayout()
-        pitch_header.addWidget(CaptionLabel("Acoustic Pitch Shift (Semitones):", self))
+        pitch_header.addWidget(CaptionLabel("Acoustic Pitch Shift:", self))
         pitch_header.addStretch()
         self.lbl_pitch_val = CaptionLabel("Auto-Match (0.0 st)", self)
         self.lbl_pitch_val.setStyleSheet("color: #0284C7; font-weight: 600;")
         pitch_header.addWidget(self.lbl_pitch_val)
-        pitch_box.addLayout(pitch_header)
+        col_pitch.addLayout(pitch_header)
 
         self.slider_pitch = Slider(Qt.Orientation.Horizontal, self)
         self.slider_pitch.setRange(-12, 12)
         self.slider_pitch.setValue(0)
         self.slider_pitch.valueChanged.connect(self._on_pitch_slider_changed)
-        pitch_box.addWidget(self.slider_pitch)
-        card_layout.addLayout(pitch_box)
+        col_pitch.addWidget(self.slider_pitch)
+        row_base_pitch.addLayout(col_pitch, stretch=3)
 
-        content_layout.addWidget(settings_card)
+        card_layout.addLayout(row_base_pitch)
+        main_layout.addWidget(settings_card)
 
         # Ingestion Mode Selection Card (Record vs Upload)
-        input_card = CardWidget(scroll_widget)
+        input_card = CardWidget(self)
         input_layout = QVBoxLayout(input_card)
-        input_layout.setContentsMargins(16, 14, 16, 14)
-        input_layout.setSpacing(10)
+        input_layout.setContentsMargins(14, 10, 14, 10)
+        input_layout.setSpacing(8)
 
         # Navigation Segmented Tabs
         self.seg_input_method = SegmentedWidget(self)
@@ -229,50 +232,52 @@ class CloneVoiceDialog(QDialog):
         # --- Page 0: Direct Mic Recording ---
         page_mic = QWidget(self)
         layout_mic = QVBoxLayout(page_mic)
-        layout_mic.setContentsMargins(0, 8, 0, 0)
-        layout_mic.setSpacing(8)
+        layout_mic.setContentsMargins(0, 4, 0, 0)
+        layout_mic.setSpacing(6)
 
         # Mic Device Row
         row_dev = QHBoxLayout()
         row_dev.addWidget(CaptionLabel("Microphone:", self))
         self.combo_mics = ComboBox(self)
-        self.combo_mics.setMinimumWidth(300)
-        self.combo_mics.setFixedHeight(34)
         self.combo_mics.currentIndexChanged.connect(self._on_mic_device_selected)
         row_dev.addWidget(self.combo_mics, stretch=1)
         self.btn_refresh_mics = ToolButton(FluentIcon.SYNC, self)
-        self.btn_refresh_mics.setFixedSize(34, 34)
+        self.btn_refresh_mics.setFixedSize(32, 32)
         self.btn_refresh_mics.setToolTip("Refresh Microphone Devices")
         self.btn_refresh_mics.clicked.connect(self._populate_audio_devices)
         row_dev.addWidget(self.btn_refresh_mics)
         layout_mic.addLayout(row_dev)
 
-        # Script Prompt Box
-        self.card_prompt = CardWidget(page_mic)
-        prompt_layout = QVBoxLayout(self.card_prompt)
-        prompt_layout.setContentsMargins(12, 10, 12, 10)
-        prompt_layout.setSpacing(4)
-        prompt_header = CaptionLabel("📖 Suggested Reading Text (Speak clearly into your mic):", self.card_prompt)
-        prompt_header.setStyleSheet("color: #0284C7; font-weight: 600;")
-        prompt_layout.addWidget(prompt_header)
+        # Script Prompt Box (Clean banner)
+        self.box_prompt = QWidget(page_mic)
+        self.box_prompt.setStyleSheet(
+            "QWidget { background-color: rgba(2, 132, 199, 0.06); border: 1px solid rgba(2, 132, 199, 0.25); border-radius: 6px; }"
+        )
+        box_prompt_layout = QVBoxLayout(self.box_prompt)
+        box_prompt_layout.setContentsMargins(8, 6, 8, 6)
+        box_prompt_layout.setSpacing(2)
 
-        self.lbl_script_prompt = BodyLabel("", self.card_prompt)
-        self.lbl_script_prompt.setStyleSheet("color: #334155; font-size: 13px; font-weight: 500;")
+        prompt_header = CaptionLabel("📖 Suggested Reading Text (Speak clearly into your mic):", self.box_prompt)
+        prompt_header.setStyleSheet("color: #0284C7; font-weight: 600; border: none; background: transparent;")
+        box_prompt_layout.addWidget(prompt_header)
+
+        self.lbl_script_prompt = BodyLabel("", self.box_prompt)
+        self.lbl_script_prompt.setStyleSheet("color: #1E293B; font-size: 13px; font-weight: 500; border: none; background: transparent;")
         self.lbl_script_prompt.setWordWrap(True)
-        prompt_layout.addWidget(self.lbl_script_prompt)
-        layout_mic.addWidget(self.card_prompt)
+        box_prompt_layout.addWidget(self.lbl_script_prompt)
+        layout_mic.addWidget(self.box_prompt)
 
         # Recording Actions Row
         rec_controls = QHBoxLayout()
-        rec_controls.setSpacing(10)
+        rec_controls.setSpacing(8)
 
         self.btn_record = PrimaryPushButton(FluentIcon.MICROPHONE, "Start Recording", page_mic)
-        self.btn_record.setFixedHeight(36)
+        self.btn_record.setFixedHeight(34)
         self.btn_record.clicked.connect(self._toggle_record)
         rec_controls.addWidget(self.btn_record)
 
         self.btn_play_record = PushButton(FluentIcon.PLAY, "Listen to Recording", page_mic)
-        self.btn_play_record.setFixedHeight(36)
+        self.btn_play_record.setFixedHeight(34)
         self.btn_play_record.setEnabled(False)
         self.btn_play_record.clicked.connect(self._toggle_playback_recording)
         rec_controls.addWidget(self.btn_play_record)
@@ -318,7 +323,7 @@ class CloneVoiceDialog(QDialog):
 
         self.stacked_input.addWidget(page_file)
         input_layout.addWidget(self.stacked_input)
-        content_layout.addWidget(input_card)
+        main_layout.addWidget(input_card)
 
         self.seg_input_method.setCurrentItem("mic")
         self.stacked_input.setCurrentIndex(0)
@@ -328,17 +333,13 @@ class CloneVoiceDialog(QDialog):
         self.clone_progress.setVisible(False)
         self.lbl_clone_status = CaptionLabel("", self)
         self.lbl_clone_status.setVisible(False)
-        content_layout.addWidget(self.lbl_clone_status)
-        content_layout.addWidget(self.clone_progress)
+        main_layout.addWidget(self.lbl_clone_status)
+        main_layout.addWidget(self.clone_progress)
 
-        self.scroll_area.setWidget(scroll_widget)
-        main_layout.addWidget(self.scroll_area, stretch=1)
-
-        # Fixed Bottom Action Bar (Always visible regardless of scrolling)
+        # Bottom Action Bar
         footer_widget = QWidget(self)
-        footer_widget.setStyleSheet("QWidget { background-color: rgba(248, 250, 252, 0.95); border-top: 1px solid #E2E8F0; }")
         footer_layout = QHBoxLayout(footer_widget)
-        footer_layout.setContentsMargins(24, 12, 24, 14)
+        footer_layout.setContentsMargins(0, 4, 0, 0)
         footer_layout.setSpacing(10)
 
         self.btn_test = PushButton(FluentIcon.PLAY, "Test Voice", footer_widget)
@@ -362,21 +363,34 @@ class CloneVoiceDialog(QDialog):
 
         main_layout.addWidget(footer_widget)
 
+    def _clean_mic_name(self, name: str) -> str:
+        """Strip redundant ALSA / chipset boilerplate for clean, readable display."""
+        s = re.sub(r"^[0-9A-Za-z\s]+On-Package High Definition Audio\s*\(HD Audio\)\s*", "Built-in ", name)
+        s = re.sub(r"^[0-9A-Za-z\s]+High Definition Audio\s*", "Built-in ", s)
+        return s.strip()
+
+    def _on_recorder_error(self, error, error_string):
+        logger.error(f"Recorder error: {error} - {error_string}")
+        self.lbl_mic_status.setText(f"❌ Recording error: {error_string or 'Device error'}")
+        self.lbl_mic_status.setStyleSheet("color: #DC2626;")
+
     def _populate_audio_devices(self):
         """Find and list available microphone input devices."""
         self.combo_mics.clear()
         self._audio_devices = QMediaDevices.audioInputs()
         default_index = 0
         for i, dev in enumerate(self._audio_devices):
-            desc = dev.description()
+            full_desc = dev.description()
+            clean_desc = self._clean_mic_name(full_desc)
             if dev.isDefault():
-                desc += " (Default)"
+                clean_desc += " (Default)"
                 default_index = i
-            self.combo_mics.addItem(desc, userData=dev.id().data().decode("utf-8", "ignore"))
+            self.combo_mics.addItem(clean_desc, userData=dev.id().data().decode("utf-8", "ignore"))
 
         if self._audio_devices:
             self.combo_mics.setCurrentIndex(default_index)
             self.audio_input.setDevice(self._audio_devices[default_index])
+            self.btn_record.setEnabled(True)
         else:
             self.combo_mics.addItem("No microphone detected")
             self.btn_record.setEnabled(False)
@@ -549,6 +563,8 @@ class CloneVoiceDialog(QDialog):
     def _validate_and_set_sample(self, path: Path, from_mic: bool = True):
         try:
             data, sr = sf.read(str(path), dtype="float32")
+            if data.ndim > 1:
+                data = np.mean(data, axis=1)
             dur = len(data) / float(sr)
             if dur < self.MIN_RECORDING_SECONDS:
                 msg = f"⚠️ Audio is too short ({dur:.1f}s). Please provide at least 3-5 seconds of speech."
@@ -687,6 +703,10 @@ class CloneVoiceDialog(QDialog):
             self.cloning_engine.synthesize_cloned(test_text, temp_profile.id, test_wav)
 
             self.preview_requested.emit(str(test_wav), f"Preview: {name}")
+
+            # Also play directly in dialog preview player for instant feedback
+            self.preview_player.setSource(QUrl.fromLocalFile(str(test_wav)))
+            self.preview_player.play()
 
             InfoBar.success(
                 title="Voice Preview Ready 🎧",
