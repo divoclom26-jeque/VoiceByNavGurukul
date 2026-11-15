@@ -66,6 +66,8 @@ class StudioInterface(QWidget):
         self.txt_title.setText("My Audio Story")
         self.txt_title.setPlaceholderText("Enter project name...")
 
+        self.btn_characters = PushButton(FluentIcon.PEOPLE, "Characters", self)
+        self.btn_characters.setToolTip("Configure multi-speaker drama characters & voice palette")
         self.btn_lexicon = PushButton(FluentIcon.DICTIONARY, "Pronunciation", self)
         self.btn_lexicon.setToolTip("Customize phonetic word substitutions & acronyms")
         self.btn_import = PushButton(FluentIcon.FOLDER, "Open File", self)
@@ -73,6 +75,7 @@ class StudioInterface(QWidget):
 
         title_row.addWidget(lbl_proj)
         title_row.addWidget(self.txt_title, stretch=1)
+        title_row.addWidget(self.btn_characters)
         title_row.addWidget(self.btn_lexicon)
         title_row.addWidget(self.btn_import)
         title_row.addWidget(self.btn_clear)
@@ -192,6 +195,7 @@ class StudioInterface(QWidget):
         self.text_edit.textChanged.connect(self._update_metrics)
         self.btn_clear.clicked.connect(self.text_edit.clear)
         self.btn_import.clicked.connect(self._import_file)
+        self.btn_characters.clicked.connect(self._open_characters_dialog)
         self.btn_lexicon.clicked.connect(self._open_lexicon_dialog)
 
         self.slider_speed.valueChanged.connect(
@@ -215,9 +219,43 @@ class StudioInterface(QWidget):
         time_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
         blocks = TextProcessor.split_into_blocks(text, max_chars=280) if text else []
 
+        from app.core.screenplay import ScreenplayParser
+
+        has_screenplay = ScreenplayParser.has_screenplay_tags(text)
+        characters = ScreenplayParser.extract_characters(text) if has_screenplay else []
+        char_badge = f" | 🎭 {len(characters)} Characters ({', '.join(characters[:3])})" if characters else ""
+
         self.lbl_metrics.setText(
-            f"Words: {words:,} | Chars: {chars:,} | Est. read: ~{time_str} | Blocks: {len(blocks)}"
+            f"Words: {words:,} | Chars: {chars:,} | Est. read: ~{time_str} | Blocks: {len(blocks)}{char_badge}"
         )
+
+    def _open_characters_dialog(self):
+        from app.core.project_manager import ProjectManager
+        from app.core.screenplay import ScreenplayParser
+        from app.ui.fluent.speaker_dialog import CharacterPaletteDialog
+
+        text = self.text_edit.toPlainText().strip()
+        if not text:
+            InfoBar.warning(
+                title="Empty Script",
+                content="Please enter text or screenplay dialogue first.",
+                parent=self,
+            )
+            return
+
+        project_name = self.txt_title.text().strip() or "Untitled Story"
+        voice_key = self.combo_voices.currentData() or "hi_IN-pratham-medium"
+        speed = self.slider_speed.value() / 100.0
+
+        project = ProjectManager.create_project(
+            name=project_name,
+            text=text,
+            voice_key=voice_key,
+            speed=speed,
+        )
+
+        dlg = CharacterPaletteDialog(project, parent=self.window())
+        dlg.exec()
 
     def _import_file(self):
         file_path, _ = QFileDialog.getOpenFileName(

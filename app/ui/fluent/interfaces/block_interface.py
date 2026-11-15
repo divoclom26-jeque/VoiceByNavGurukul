@@ -79,6 +79,11 @@ class BlockInterface(QWidget):
         self.search_bar.textChanged.connect(self.refresh)
         top_row.addWidget(self.search_bar)
 
+        self.btn_characters = PushButton(FluentIcon.PEOPLE, "Characters", self)
+        self.btn_characters.setToolTip("Configure character voices and multi-speaker palette")
+        self.btn_characters.clicked.connect(self._open_characters_dialog)
+        top_row.addWidget(self.btn_characters)
+
         self.btn_add_block = PushButton(FluentIcon.ADD, "Add Block", self)
         self.btn_add_block.clicked.connect(self._add_new_block)
         top_row.addWidget(self.btn_add_block)
@@ -173,9 +178,18 @@ class BlockInterface(QWidget):
             # 3: Text Segment
             self.table.setItem(row, 3, QTableWidgetItem(block.text))
 
-            # 4: Voice
-            voice_display = block.voice_key or "Default"
-            self.table.setItem(row, 4, QTableWidgetItem(voice_display))
+            # 4: Voice / Character
+            if block.speaker_label:
+                char_data = self.project.get_character_palette().get(block.speaker_label, {})
+                spk_color = char_data.get("color", "#0078D4")
+                v_name = block.voice_key or "Default"
+                voice_display = f"🎭 {block.speaker_label} ({v_name})"
+                item_voice = QTableWidgetItem(voice_display)
+                item_voice.setForeground(QColor(spk_color))
+            else:
+                voice_display = block.voice_key or "Default"
+                item_voice = QTableWidgetItem(voice_display)
+            self.table.setItem(row, 4, item_voice)
 
             # 5: Duration
             dur_str = f"{block.duration:.2f}s" if block.duration > 0 else "-"
@@ -326,3 +340,14 @@ class BlockInterface(QWidget):
             )
         except Exception as e:
             InfoBar.error(title="Re-pack Failed", content=str(e), parent=self)
+
+    def _open_characters_dialog(self):
+        if not self.project:
+            InfoBar.warning(title="No Project", content="Load or synthesize a project first.", parent=self)
+            return
+
+        from app.ui.fluent.speaker_dialog import CharacterPaletteDialog
+
+        dlg = CharacterPaletteDialog(self.project, parent=self.window())
+        dlg.palette_applied.connect(self.refresh)
+        dlg.exec()

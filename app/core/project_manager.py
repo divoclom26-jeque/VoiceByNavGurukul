@@ -462,6 +462,50 @@ class Project:
 
         return new_block
 
+    def get_character_palette(self) -> Dict[str, Dict[str, Any]]:
+        """Return character palette from project metadata."""
+        return self.metadata.get("characters", {})
+
+    def set_character_voice(
+        self,
+        character: str,
+        voice_key: str,
+        update_blocks: bool = True,
+    ) -> None:
+        """Update voice for a character and optionally update all matching blocks."""
+        if "characters" not in self.metadata:
+            self.metadata["characters"] = {}
+        if character not in self.metadata["characters"]:
+            from app.core.screenplay import CHARACTER_COLORS
+
+            idx = len(self.metadata["characters"])
+            self.metadata["characters"][character] = {
+                "color": CHARACTER_COLORS[idx % len(CHARACTER_COLORS)],
+                "gender": "neutral",
+            }
+
+        self.metadata["characters"][character]["voice_key"] = voice_key
+
+        if update_blocks:
+            for b in self.blocks:
+                if b.speaker_label == character:
+                    b.voice_key = voice_key
+                    b.status = "pending"
+
+        self.save()
+
+    def set_character_color(self, character: str, color_hex: str) -> None:
+        """Update display badge color for a character."""
+        if "characters" not in self.metadata:
+            self.metadata["characters"] = {}
+        if character not in self.metadata["characters"]:
+            self.metadata["characters"][character] = {
+                "voice_key": self.voice_key,
+                "gender": "neutral",
+            }
+        self.metadata["characters"][character]["color"] = color_hex
+        self.save()
+
     def split_block(
         self,
         block_id: int,
@@ -545,11 +589,50 @@ class ProjectManager:
 
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        raw_blocks = TextProcessor.split_into_blocks(text, max_chars=max_chars, project_dir=project_dir)
-        text_blocks = [
-            TextBlock(id=i + 1, text=block_text)
-            for i, block_text in enumerate(raw_blocks)
-        ]
+        # Check if text contains screenplay dialogue tags
+        from app.core.screenplay import ScreenplayParser
+
+        has_screenplay = ScreenplayParser.has_screenplay_tags(text)
+
+        text_blocks: List[TextBlock] = []
+        char_palette: Dict[str, Dict[str, Any]] = {}
+
+        if has_screenplay:
+            turns = ScreenplayParser.parse_screenplay(text)
+            characters = ScreenplayParser.extract_characters(text)
+            voices = list_local_voices()
+            char_palette = ScreenplayParser.generate_character_palette(
+                characters, voices, default_voice_key=voice_key
+            )
+
+            block_id = 1
+            for turn in turns:
+                spk = turn["speaker"]
+                turn_text = turn["text"]
+                spk_voice = char_palette.get(spk, {}).get("voice_key") or voice_key
+
+                # Split turn text if it exceeds max_chars
+                turn_chunks = TextProcessor.split_into_blocks(
+                    turn_text, max_chars=max_chars, project_dir=project_dir
+                )
+                for chunk in turn_chunks:
+                    text_blocks.append(
+                        TextBlock(
+                            id=block_id,
+                            text=chunk,
+                            voice_key=spk_voice,
+                            speaker_label=spk,
+                        )
+                    )
+                    block_id += 1
+        else:
+            raw_blocks = TextProcessor.split_into_blocks(
+                text, max_chars=max_chars, project_dir=project_dir
+            )
+            text_blocks = [
+                TextBlock(id=i + 1, text=block_text)
+                for i, block_text in enumerate(raw_blocks)
+            ]
 
         project = Project(
             project_dir=project_dir,
@@ -557,7 +640,12 @@ class ProjectManager:
             voice_key=voice_key,
             speed=speed,
             blocks=text_blocks,
-            metadata={"source_char_count": len(text), "block_count": len(text_blocks)},
+            metadata={
+                "source_char_count": len(text),
+                "block_count": len(text_blocks),
+                "is_screenplay": has_screenplay,
+                "characters": char_palette,
+            },
         )
         project.save()
         return project
