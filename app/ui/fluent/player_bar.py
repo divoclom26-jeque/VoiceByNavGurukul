@@ -13,6 +13,8 @@ from qfluentwidgets import (
     TransparentToolButton,
 )
 
+from app.ui.fluent.waveform_widget import WaveformWidget
+
 
 class FluentAudioPlayerBar(CardWidget):
     """Modern Fluent Audio Player Bar with scrubbable slider, controls, and volume."""
@@ -63,11 +65,9 @@ class FluentAudioPlayerBar(CardWidget):
         controls_row.addWidget(self.btn_play)
         controls_row.addWidget(self.btn_stop)
 
-        # Seek Slider
-        self.seek_slider = Slider(Qt.Orientation.Horizontal, self)
-        self.seek_slider.setRange(0, 0)
-        self.seek_slider.setEnabled(False)
-        controls_row.addWidget(self.seek_slider, stretch=1)
+        # Interactive Visual Waveform Scrubber
+        self.waveform = WaveformWidget(self)
+        controls_row.addWidget(self.waveform, stretch=1)
 
         # Volume Controls
         self.lbl_vol_icon = CaptionLabel("🔊", self)
@@ -86,15 +86,17 @@ class FluentAudioPlayerBar(CardWidget):
 
         self.vol_slider.valueChanged.connect(lambda v: self.audio_output.setVolume(v / 100.0))
 
+        # Waveform seek signal
+        self.waveform.seek_requested.connect(self._on_waveform_seek)
+
         # Player signals
         self.player.durationChanged.connect(self._on_duration_changed)
         self.player.positionChanged.connect(self._on_position_changed)
         self.player.playbackStateChanged.connect(self._on_playback_state_changed)
 
-        # Slider seeking signals
-        self.seek_slider.sliderPressed.connect(self._on_slider_pressed)
-        self.seek_slider.sliderMoved.connect(self._on_slider_moved)
-        self.seek_slider.sliderReleased.connect(self._on_slider_released)
+    def _on_waveform_seek(self, position_ms: int):
+        self.player.setPosition(position_ms)
+        self._update_time_label(position_ms, self.player.duration())
 
     def load_audio(self, file_path: str, title: Optional[str] = None):
         path = Path(file_path).resolve()
@@ -108,9 +110,8 @@ class FluentAudioPlayerBar(CardWidget):
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         self.btn_play.setEnabled(True)
         self.btn_stop.setEnabled(True)
-        self.seek_slider.setEnabled(True)
-        self.seek_slider.setValue(0)
         self.lbl_time.setText("00:00 / 00:00")
+        self.waveform.load_audio(str(path))
 
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
@@ -127,7 +128,7 @@ class FluentAudioPlayerBar(CardWidget):
 
     def stop(self):
         self.player.stop()
-        self.seek_slider.setValue(0)
+        self.waveform.set_position(0)
         self.btn_play.setIcon(FluentIcon.PLAY)
 
     def _on_playback_state_changed(self, state):
@@ -137,23 +138,12 @@ class FluentAudioPlayerBar(CardWidget):
             self.btn_play.setIcon(FluentIcon.PLAY)
 
     def _on_duration_changed(self, duration_ms: int):
-        self.seek_slider.setRange(0, duration_ms)
+        self.waveform.set_duration(duration_ms)
         self._update_time_label(self.player.position(), duration_ms)
 
     def _on_position_changed(self, position_ms: int):
-        if not self._user_is_seeking:
-            self.seek_slider.setValue(position_ms)
+        self.waveform.set_position(position_ms)
         self._update_time_label(position_ms, self.player.duration())
-
-    def _on_slider_pressed(self):
-        self._user_is_seeking = True
-
-    def _on_slider_moved(self, position_ms: int):
-        self._update_time_label(position_ms, self.player.duration())
-
-    def _on_slider_released(self):
-        self._user_is_seeking = False
-        self.player.setPosition(self.seek_slider.value())
 
     def _update_time_label(self, pos_ms: int, dur_ms: int):
         cur_time = QTime(0, 0, 0).addMSecs(max(0, pos_ms)).toString("mm:ss")

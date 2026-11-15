@@ -19,11 +19,13 @@ class AudioPipeline:
         wav_files: List[Path],
         output_path: Path,
         pause_ms: int = 350,
+        fade_ms: int = 15,
     ) -> Path:
         """Losslessly concatenate multiple WAV files that share sample rate & channel config.
         
         Inserts silence of pause_ms duration between chunks.
-        Operates directly using Python wave stdlib for instant execution.
+        Applies smooth micro fade-in and fade-out (fade_ms) to eliminate seam clicks.
+        Operates directly using Python wave stdlib and numpy for instant execution.
         """
         if not wav_files:
             raise ValueError("No WAV files provided for concatenation.")
@@ -61,7 +63,13 @@ class AudioPipeline:
                             tmp_output.unlink()
                         return self.concatenate_with_ffmpeg(wav_files, output_path, pause_ms)
 
-                    out_wf.writeframes(in_wf.readframes(in_wf.getnframes()))
+                    raw_frames = in_wf.readframes(in_wf.getnframes())
+                    if fade_ms > 0 and sample_width == 2:
+                        raw_frames = self.apply_micro_fades(
+                            raw_frames, n_channels, sample_width, framerate, fade_ms
+                        )
+
+                    out_wf.writeframes(raw_frames)
 
                 # Insert pause between chunks (but not after the last chunk)
                 if pause_ms > 0 and i < len(wav_files) - 1:
@@ -70,6 +78,46 @@ class AudioPipeline:
         validate_wav_file(tmp_output)
         tmp_output.replace(output_path)
         return output_path
+
+    @staticmethod
+    def apply_micro_fades(
+        raw_bytes: bytes,
+        n_channels: int,
+        sample_width: int,
+        framerate: int,
+        fade_ms: int = 15,
+    ) -> bytes:
+        """Apply linear micro fade-in and fade-out to prevent clicks and DC offset pops."""
+        if sample_width != 2 or fade_ms <= 0:
+            return raw_bytes
+
+        fade_len = int(framerate * (fade_ms / 1000.0))
+        if fade_len <= 0:
+            return raw_bytes
+
+        import numpy as np
+
+        samples = np.frombuffer(raw_bytes, dtype=np.int16).copy()
+        total_samples = len(samples) // n_channels
+        if total_samples < fade_len * 2:
+            return raw_bytes
+
+        fade_in = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+        fade_out = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+
+        if n_channels == 1:
+            samples[:fade_len] = (samples[:fade_len] * fade_in).astype(np.int16)
+            samples[-fade_len:] = (samples[-fade_len:] * fade_out).astype(np.int16)
+        else:
+            for ch in range(n_channels):
+                samples[ch::n_channels][:fade_len] = (
+                    samples[ch::n_channels][:fade_len] * fade_in
+                ).astype(np.int16)
+                samples[ch::n_channels][-fade_len:] = (
+                    samples[ch::n_channels][-fade_len:] * fade_out
+                ).astype(np.int16)
+
+        return samples.tobytes()
 
     def concatenate_with_ffmpeg(
         self,
