@@ -86,8 +86,24 @@ class SynthesisWorker(QThread):
                 self.progress.emit(idx, total_blocks, msg)
 
                 out_wav = project.segments_dir / f"block_{block.id:04d}.wav"
+
+                # Smart Cache: Skip re-synthesis if block is already completed and valid on disk
+                if block.status == "completed" and block.audio_file:
+                    existing_path = project.project_dir / block.audio_file
+                    if existing_path.is_file() and existing_path.stat().st_size > 44:
+                        self.block_completed.emit(block.id, block.duration, str(existing_path))
+                        continue
+
                 try:
                     block_voice_cfg = project.get_voice_config_for_block(block)
+
+                    # Dynamic expressive cadence: ±1.5% micro-variation between consecutive sentences
+                    base_spd = block_voice_cfg.get("speed", self.speed)
+                    cadence_jitter = -0.015 if idx % 3 == 1 else (0.015 if idx % 3 == 2 else 0.0)
+                    block_voice_cfg["speed"] = max(0.4, min(2.5, base_spd + cadence_jitter))
+                    block_voice_cfg.setdefault("noise_scale", 0.720)
+                    block_voice_cfg.setdefault("noise_w", 0.880)
+
                     if block_voice_cfg.get("key", "").startswith("clone_"):
                         from app.clone.engine import VoiceCloningEngine
                         clone_engine = VoiceCloningEngine()

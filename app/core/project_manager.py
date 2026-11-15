@@ -313,12 +313,17 @@ class Project:
 
         completed_files = []
         pauses_ms = []
-        for b in self.blocks:
+        for i, b in enumerate(self.blocks):
             if b.status == "completed" and b.audio_file:
                 seg_path = self.project_dir / b.audio_file
                 if seg_path.is_file():
                     completed_files.append(seg_path)
-                    p_val = b.pause_after_ms if b.pause_after_ms is not None else pause_ms
+                    if b.pause_after_ms is not None:
+                        p_val = b.pause_after_ms
+                    elif pause_ms != 350:
+                        p_val = pause_ms
+                    else:
+                        p_val = ProjectManager.calculate_human_pause(b.text, is_paragraph_end=False)
                     pauses_ms.append(p_val)
 
         if not completed_files:
@@ -685,6 +690,20 @@ class ProjectManager:
         return re.sub(r"[-\s]+", "_", s) or "untitled_project"
 
     @classmethod
+    def calculate_human_pause(cls, text: str, is_paragraph_end: bool) -> int:
+        """Calculate natural human pause duration based on punctuation and paragraph context."""
+        stripped = text.strip()
+        if is_paragraph_end:
+            return 750  # Dramatic breath pause between story paragraphs
+        if stripped.endswith("?") or stripped.endswith("!"):
+            return 480  # Curious, interrogative, or emphatic pause
+        if stripped.endswith(",") or stripped.endswith(";") or stripped.endswith("—"):
+            return 180  # Short clause breath pause
+        if stripped.endswith("।") or stripped.endswith("."):
+            return 420  # Natural sentence ending
+        return 350
+
+    @classmethod
     def create_project(
         cls,
         name: str,
@@ -739,13 +758,17 @@ class ProjectManager:
                     )
                     block_id += 1
         else:
-            raw_blocks = TextProcessor.split_into_blocks(
-                text, max_chars=max_chars, project_dir=project_dir
-            )
-            text_blocks = [
-                TextBlock(id=i + 1, text=block_text)
-                for i, block_text in enumerate(raw_blocks)
-            ]
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+            block_id = 1
+            for p_idx, p in enumerate(paragraphs):
+                raw_blocks = TextProcessor.split_into_blocks(
+                    p, max_chars=max_chars, project_dir=project_dir
+                )
+                for block_text in raw_blocks:
+                    text_blocks.append(
+                        TextBlock(id=block_id, text=block_text)
+                    )
+                    block_id += 1
 
         project = Project(
             project_dir=project_dir,

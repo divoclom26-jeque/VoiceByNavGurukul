@@ -74,12 +74,18 @@ class PiperTTSEngine(BaseTTSEngine):
         speed_clamped = max(0.25, min(3.0, speed))
         length_scale = 1.0 / speed_clamped
 
+        # Expressive prosody parameters for natural human storytelling
+        noise_scale = float(voice_config.get("noise_scale", 0.720))
+        noise_w_scale = float(voice_config.get("noise_w", voice_config.get("noise_w_scale", 0.880)))
+
         cmd = [
             str(self.executable),
             "--model", str(voice_config["model_path"]),
             "--config", str(voice_config["config_path"]),
             "--output_file", str(tmp_wav),
             "--length-scale", f"{length_scale:.4f}",
+            "--noise-scale", f"{noise_scale:.4f}",
+            "--noise-w-scale", f"{noise_w_scale:.4f}",
         ]
 
         # Add speaker ID if specified

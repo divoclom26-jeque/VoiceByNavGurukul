@@ -167,7 +167,8 @@ class StudioInterface(QWidget):
         # Mastering FX Preset
         settings_layout.addWidget(CaptionLabel("Mastering FX Preset:", self))
         self.combo_preset = ComboBox(self)
-        self.combo_preset.addItem("⚡ Crisp & Clean (Default)", userData="crisp_clean")
+        self.combo_preset.addItem("🎭 Warm Storyteller (Default)", userData="warm_storyteller")
+        self.combo_preset.addItem("⚡ Crisp & Clean", userData="crisp_clean")
         self.combo_preset.addItem("🎙️ Podcast Warmth", userData="podcast_warmth")
         self.combo_preset.addItem("📻 Broadcast Clarity", userData="broadcast_clarity")
         self.combo_preset.addItem("📖 Audiobook Standard (ACX)", userData="audiobook_acx")
@@ -178,7 +179,7 @@ class StudioInterface(QWidget):
         room_row = QHBoxLayout()
         room_row.addWidget(CaptionLabel("Natural Room Tone:", self))
         self.switch_room_tone = SwitchButton(self)
-        self.switch_room_tone.setChecked(False)
+        self.switch_room_tone.setChecked(True)
         self.switch_room_tone.setToolTip("Adds subtle acoustic room presence during silence to eliminate artificial digital void.")
         room_row.addStretch()
         room_row.addWidget(self.switch_room_tone)
@@ -428,7 +429,7 @@ class StudioInterface(QWidget):
         pause_ms = self.slider_pause.value()
         fmt = self.combo_format.currentData() or "wav"
         norm = self.switch_loudnorm.isChecked()
-        preset_key = self.combo_preset.currentData() or "crisp_clean"
+        preset_key = self.combo_preset.currentData() or "warm_storyteller"
         room_tone = self.switch_room_tone.isChecked()
 
         self.btn_generate.setEnabled(False)

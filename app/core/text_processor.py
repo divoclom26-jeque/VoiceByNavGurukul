@@ -163,6 +163,26 @@ class TextProcessor:
         return cleaned
 
     @classmethod
+    def apply_clause_phrasing(cls, text: str, lang: str = "en") -> str:
+        """Insert natural clause breath markers before Hindi/English conjunctions in long sentences."""
+        stripped = text.strip()
+        if len(stripped) < 45:
+            return text
+
+        # Hindi conjunctions: कि, तथा, लेकिन, परंतु, क्योंकि, इसलिए, जिससे, ताकि, यद्यपि
+        hindi_conjunctions = r"कि|तथा|लेकिन|परंतु|क्योंकि|इसलिए|जिससे|ताकि|यद्यपि"
+        pattern_hi = re.compile(rf"(?<![,;—।\.\!\?])\s+({hindi_conjunctions})\s+", re.UNICODE)
+        text = pattern_hi.sub(r", \1 ", text)
+
+        # In Hindi: also split long clauses on 'और' if sentence has 12+ words
+        words = text.split()
+        if len(words) >= 12 and "और" in words:
+            pattern_aur = re.compile(r"(?<![,;—।\.\!\?])\s+(और)\s+", re.UNICODE)
+            text = pattern_aur.sub(r", और ", text)
+
+        return text
+
+    @classmethod
     def split_into_blocks(
         cls,
         text: str,
@@ -192,23 +212,17 @@ class TextProcessor:
         sentence_regex = re.compile(r".+?(?:[\.\!\?।]+(?=\s+|$)|$)", re.DOTALL)
 
         for p in paragraphs:
-            # If paragraph itself fits within max_chars, keep as one block
-            if len(p) <= max_chars:
-                blocks.append(p)
-                continue
+            # Break paragraph into constituent sentences
+            raw_sentences = [s.strip() for s in sentence_regex.findall(p) if s.strip()]
+            for s in raw_sentences:
+                # Apply clause phrasing on long sentences
+                s = cls.apply_clause_phrasing(s, lang=lang)
 
-            # Break paragraph into sentences
-            sentences = [s.strip() for s in sentence_regex.findall(p) if s.strip()]
-            current_chunk = ""
-
-            for s in sentences:
-                # If a single sentence exceeds max_chars, split on clauses (; , —)
-                if len(s) > max_chars:
-                    # Flush current accumulator first
-                    if current_chunk:
-                        blocks.append(current_chunk)
-                        current_chunk = ""
-
+                # If sentence fits within max_chars, keep as individual sentence block
+                if len(s) <= max_chars:
+                    blocks.append(s)
+                else:
+                    # If a single sentence exceeds max_chars, split on clauses (; , —)
                     clause_regex = re.compile(r".+?(?:[;,—\-]+(?=\s+|$)|$)", re.DOTALL)
                     clauses = [c.strip() for c in clause_regex.findall(s) if c.strip()]
                     clause_acc = ""
@@ -239,18 +253,6 @@ class TextProcessor:
                                 clause_acc = c
                     if clause_acc:
                         blocks.append(clause_acc)
-
-                else:
-                    # Sentence fits; pack as many sentences as possible into max_chars
-                    if len(current_chunk) + len(s) + 1 <= max_chars:
-                        current_chunk = f"{current_chunk} {s}".strip()
-                    else:
-                        if current_chunk:
-                            blocks.append(current_chunk)
-                        current_chunk = s
-
-            if current_chunk:
-                blocks.append(current_chunk)
 
         # Filter out any empty blocks or pure whitespace
         return [b for b in blocks if any(char.isalnum() for char in b)]

@@ -179,6 +179,13 @@ class AudioPipeline:
                 pause_wav.unlink()
 
     STUDIO_PRESETS: Dict[str, Dict[str, Any]] = {
+        "warm_storyteller": {
+            "name": "🎭 Warm Storyteller (Human Narration)",
+            "desc": "Natural human resonance (+2.2dB @ 160Hz), de-harsh (-1.5dB @ 3.2kHz), and leveling compressor",
+            "filter": "highpass=f=70,equalizer=f=160:width_type=o:width=1.4:g=2.2,equalizer=f=3200:width_type=o:width=1.2:g=-1.5,equalizer=f=10000:width_type=o:width=1.5:g=1.0,acompressor=threshold=-19dB:ratio=2.5:attack=25:release=200:makeup=2.2",
+            "target_i": -16.0,
+            "true_peak": -1.5,
+        },
         "podcast_warmth": {
             "name": "🎙️ Podcast Warmth",
             "desc": "Rich low-end proximity (+3dB @ 120Hz) with optical compression",
