@@ -244,13 +244,42 @@ def cmd_list_projects(args):
     print()
 
 
+def cmd_gui(args):
+    """Launch the PySide6 Desktop GUI."""
+    try:
+        from PySide6.QtWidgets import QApplication
+        from app.ui.main_window import MainWindow
+    except ImportError as e:
+        print(f"[!] PySide6 is required to run the desktop GUI: {e}")
+        print("    Install it via: uv pip install --python .venv PySide6")
+        sys.exit(1)
+
+    app = QApplication(sys.argv)
+    app.setApplicationName("Voice Studio AI")
+    app.setOrganizationName("NavGurukul")
+
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+
+
 def main():
     ensure_directories()
+
+    # If no CLI arguments provided, launch GUI directly
+    if len(sys.argv) == 1:
+        cmd_gui(None)
+        return
+
     parser = argparse.ArgumentParser(
         description="Local Voice Engine Studio - High-Performance Offline Text-to-Voice",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # Command: gui
+    sub_gui = subparsers.add_parser("gui", help="Launch the PySide6 Desktop GUI")
+    sub_gui.set_defaults(func=cmd_gui)
 
     # Command: voices
     sub_voices = subparsers.add_parser("voices", help="List locally installed voice models")
