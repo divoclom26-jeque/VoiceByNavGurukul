@@ -21,9 +21,7 @@ htmlcov/
 *.tmp.wav
 
 # Project generated outputs
-projects/*.wav
-projects/*.mp3
-projects/*.m4b
+projects/*
 !projects/.gitkeep
 
 # Models directory cache

@@ -245,16 +245,60 @@ def cmd_list_projects(args):
 
 
 def cmd_gui(args):
-    """Launch the modern Studio Desktop App (React + Tailwind + Native WebView)."""
-    import threading
-    import time
-    import webbrowser
-    import uvicorn
-    from app.server import app as fastapi_app
+    """Launch the modern Desktop GUI (Default: Pure Python Fluent 2 Windows 11/macOS UI)."""
+    use_web = getattr(args, "web", False) or getattr(args, "browser", False) if args else False
+    use_legacy = getattr(args, "legacy_qt", False) if args else False
+    port = getattr(args, "port", 8765) if args else 8765
 
-    use_legacy = getattr(args, "legacy_qt", False)
-    use_browser = getattr(args, "browser", False)
-    port = getattr(args, "port", 8765)
+    if use_web:
+        import threading
+        import time
+        import webbrowser
+        import uvicorn
+        from app.server import app as fastapi_app
+
+        def run_server():
+            uvicorn.run(fastapi_app, host="127.0.0.1", port=port, log_level="warning")
+
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
+        time.sleep(0.8)
+
+        url = f"http://127.0.0.1:{port}"
+        print(f"\n[+] Voice Studio AI Server active at: {url}")
+
+        if getattr(args, "browser", False):
+            print("[*] Opening in system web browser...")
+            webbrowser.open(url)
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nShutting down server.")
+                sys.exit(0)
+
+        try:
+            import webview
+            print("[*] Launching Modern Webview Desktop Window...")
+            window = webview.create_window(
+                title="Voice Studio AI — Studio Desktop",
+                url=url,
+                width=1280,
+                height=820,
+                min_size=(960, 640),
+                background_color="#090a0f",
+            )
+            webview.start(gui="qt")
+        except Exception as e:
+            print(f"[!] Native webview fallback: {e}")
+            webbrowser.open(url)
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nShutting down server.")
+                sys.exit(0)
+        return
 
     if use_legacy:
         try:
@@ -265,7 +309,7 @@ def cmd_gui(args):
             print(f"[!] PySide6 required: {e}")
             sys.exit(1)
 
-        app = QApplication(sys.argv)
+        app = QApplication.instance() or QApplication(sys.argv)
         app.setApplicationName("Voice Studio AI")
         app.setOrganizationName("NavGurukul")
         icon_path = Path(__file__).parent / "assets" / "icon.png"
@@ -275,50 +319,26 @@ def cmd_gui(args):
         window.show()
         sys.exit(app.exec())
 
-    # Start FastAPI server in background thread
-    def run_server():
-        uvicorn.run(fastapi_app, host="127.0.0.1", port=port, log_level="warning")
-
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
-    time.sleep(0.8)
-
-    url = f"http://127.0.0.1:{port}"
-    print(f"\n[+] Voice Studio AI Server active at: {url}")
-
-    if use_browser:
-        print("[*] Opening in system web browser...")
-        webbrowser.open(url)
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\nShutting down server.")
-            sys.exit(0)
-
-    # Launch native desktop window via pywebview
+    # Default: Pure Python Modern Fluent 2 Studio (Option B)
     try:
-        import webview
-        print("[*] Launching Modern Desktop Window...")
-        window = webview.create_window(
-            title="Voice Studio AI — Studio Desktop",
-            url=url,
-            width=1280,
-            height=820,
-            min_size=(960, 640),
-            background_color="#090a0f",
-        )
-        webview.start(gui="qt")
-    except Exception as e:
-        print(f"[!] Native webview fallback: {e}")
-        print(f"[*] Opening in system browser at {url}...")
-        webbrowser.open(url)
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\nShutting down server.")
-            sys.exit(0)
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QIcon
+        from app.ui.fluent import FluentMainWindow
+    except ImportError as e:
+        print(f"[!] PySide6-Fluent-Widgets required: {e}")
+        print("    Install with: pip install PySide6-Fluent-Widgets darkdetect")
+        sys.exit(1)
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("Voice Studio AI")
+    app.setOrganizationName("NavGurukul")
+    icon_path = Path(__file__).parent / "assets" / "icon.png"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
+    window = FluentMainWindow()
+    window.show()
+    sys.exit(app.exec())
 
 
 def main():
@@ -336,10 +356,11 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Command: gui
-    sub_gui = subparsers.add_parser("gui", help="Launch the Modern Studio Desktop GUI")
-    sub_gui.add_argument("--browser", action="store_true", help="Open in default web browser instead of native webview")
+    sub_gui = subparsers.add_parser("gui", help="Launch the Modern Studio Desktop GUI (Fluent 2 Pure Python)")
+    sub_gui.add_argument("--web", action="store_true", help="Launch the React/FastAPI webview interface")
+    sub_gui.add_argument("--browser", action="store_true", help="Open web interface in default browser")
     sub_gui.add_argument("--legacy-qt", action="store_true", help="Launch the legacy Qt widget UI")
-    sub_gui.add_argument("--port", type=int, default=8765, help="Port to run server on (default: 8765)")
+    sub_gui.add_argument("--port", type=int, default=8765, help="Port to run web server on (default: 8765)")
     sub_gui.set_defaults(func=cmd_gui)
 
     # Command: voices
