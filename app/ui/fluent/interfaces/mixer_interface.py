@@ -123,8 +123,37 @@ class MixerInterface(QWidget):
             "MP3 Podcast (ID3 Tags)",
             "FLAC Lossless Master",
             "WAV Studio Wave",
+            "🎬 Audiogram Video (1080p MP4)",
+            "📜 Synchronized Subtitles (.SRT)",
+            "🌐 WebVTT Subtitles (.VTT)",
         ])
         meta_layout.addWidget(self.combo_format)
+
+        # Audiogram Options Container (Visible only when Audiogram Video is selected)
+        self.audiogram_box = QWidget(self)
+        ag_layout = QVBoxLayout(self.audiogram_box)
+        ag_layout.setContentsMargins(0, 4, 0, 0)
+        ag_layout.setSpacing(6)
+
+        self.lbl_aspect = CaptionLabel("Video Aspect Ratio:", self.audiogram_box)
+        ag_layout.addWidget(self.lbl_aspect)
+        self.combo_aspect = ComboBox(self.audiogram_box)
+        self.combo_aspect.addItem("1:1 Square (Instagram / Post)", userData="square")
+        self.combo_aspect.addItem("9:16 Vertical (Reels / Shorts / TikTok)", userData="vertical")
+        self.combo_aspect.addItem("16:9 Landscape (YouTube / Desktop)", userData="landscape")
+        ag_layout.addWidget(self.combo_aspect)
+
+        burn_row = QHBoxLayout()
+        burn_row.addWidget(CaptionLabel("Burn Subtitles into Video:", self.audiogram_box))
+        self.switch_burn_subs = SwitchButton(self.audiogram_box)
+        self.switch_burn_subs.setChecked(True)
+        burn_row.addWidget(self.switch_burn_subs)
+        burn_row.addStretch()
+        ag_layout.addLayout(burn_row)
+
+        self.audiogram_box.setVisible(False)
+        meta_layout.addWidget(self.audiogram_box)
+        self.combo_format.currentIndexChanged.connect(self._on_format_changed)
 
         grid.addWidget(meta_card, 0, 1)
 
@@ -177,6 +206,10 @@ class MixerInterface(QWidget):
         self.btn_produce.setFixedHeight(42)
         self.btn_produce.clicked.connect(self._produce_master)
         main_layout.addWidget(self.btn_produce)
+
+    def _on_format_changed(self):
+        is_audiogram = "Audiogram" in self.combo_format.currentText()
+        self.audiogram_box.setVisible(is_audiogram)
 
     def _update_fx_desc(self):
         preset_key = self.combo_fx_preset.currentData() or "podcast_warmth"
@@ -250,7 +283,52 @@ class MixerInterface(QWidget):
 
             fmt_text = self.combo_format.currentText()
             final_file = None
-            if "M4B" in fmt_text:
+
+            if "Audiogram" in fmt_text:
+                aspect = self.combo_aspect.currentData() or "square"
+                burn_subs = self.switch_burn_subs.isChecked()
+                srt_path = None
+                if burn_subs:
+                    srt_path = self.project.export_subtitles(format="srt")
+
+                final_file = self.project.exports_dir / f"{self.project.name}_audiogram_{aspect}.mp4"
+                self.pipeline.export_audiogram_video(
+                    speech_wav=active_track,
+                    output_mp4=final_file,
+                    title=metadata["title"],
+                    author=metadata["artist"],
+                    subtitle_srt=srt_path,
+                    aspect_ratio=aspect,
+                )
+                InfoBar.success(
+                    title="Audiogram Video Ready! 🎬",
+                    content=f"Saved HD video to {final_file.name}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                )
+                return
+
+            elif "SRT" in fmt_text:
+                final_file = self.project.export_subtitles(format="srt")
+                InfoBar.success(
+                    title="Synchronized Subtitles Ready! 📜",
+                    content=f"Saved SRT file to {final_file.name}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                )
+                return
+
+            elif "VTT" in fmt_text:
+                final_file = self.project.export_subtitles(format="vtt")
+                InfoBar.success(
+                    title="WebVTT Subtitles Ready! 🌐",
+                    content=f"Saved VTT file to {final_file.name}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                )
+                return
+
+            elif "M4B" in fmt_text:
                 final_file = self.project.exports_dir / f"{self.project.name}_audiobook.m4b"
                 self.pipeline.export_to_m4b(active_track, final_file, metadata=metadata, chapters=chapters)
             elif "MP3" in fmt_text:

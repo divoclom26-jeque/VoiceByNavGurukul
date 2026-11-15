@@ -88,6 +88,11 @@ class BlockInterface(QWidget):
         self.btn_add_block.clicked.connect(self._add_new_block)
         top_row.addWidget(self.btn_add_block)
 
+        self.btn_subtitles = PushButton(FluentIcon.DOCUMENT, "Subtitles", self)
+        self.btn_subtitles.setToolTip("Export synchronized SRT & WebVTT subtitles")
+        self.btn_subtitles.clicked.connect(self._export_subtitles)
+        top_row.addWidget(self.btn_subtitles)
+
         self.btn_repack = PrimaryPushButton(FluentIcon.SYNC, "Fast Re-Pack Master", self)
         self.btn_repack.clicked.connect(self._repack_master)
         top_row.addWidget(self.btn_repack)
@@ -351,3 +356,29 @@ class BlockInterface(QWidget):
         dlg = CharacterPaletteDialog(self.project, parent=self.window())
         dlg.palette_applied.connect(self.refresh)
         dlg.exec()
+
+    def _export_subtitles(self):
+        if not self.project:
+            InfoBar.warning(title="No Project", content="Please load or create a project first.", parent=self)
+            return
+
+        completed = [b for b in self.project.blocks if b.status == "completed"]
+        if not completed:
+            InfoBar.warning(
+                title="No Audio Segments",
+                content="Please synthesize script blocks before exporting subtitles.",
+                parent=self,
+            )
+            return
+
+        try:
+            srt_path = self.project.export_subtitles(format="srt")
+            vtt_path = self.project.export_subtitles(format="vtt")
+            InfoBar.success(
+                title="Subtitles Exported! 📜",
+                content=f"Saved {srt_path.name} & {vtt_path.name} to exports/",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
+        except Exception as e:
+            InfoBar.error(title="Export Failed", content=str(e), parent=self)

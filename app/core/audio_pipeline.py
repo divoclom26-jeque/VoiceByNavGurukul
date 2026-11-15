@@ -510,3 +510,127 @@ class AudioPipeline:
 
         tmp_flac.replace(output_flac)
         return output_flac
+
+    def export_audiogram_video(
+        self,
+        speech_wav: Path,
+        output_mp4: Path,
+        title: str = "Voice Engine AI",
+        author: str = "Voice Engine",
+        subtitle_srt: Optional[Path] = None,
+        aspect_ratio: str = "square",
+        waveform_color: str = "0x38BDF8",
+        bg_color: str = "0x0F172A",
+    ) -> Path:
+        """Export speech audio to high-definition Audiogram video (.MP4) with animated waveform and burned subtitles.
+        
+        Supports aspect ratios:
+        - "square" (1:1, 1080x1080) for Instagram posts / LinkedIn
+        - "vertical" (9:16, 1080x1920) for Instagram Reels / YouTube Shorts / TikTok
+        - "landscape" (16:9, 1920x1080) for YouTube / Web / Presentations
+        """
+        import tempfile
+
+        speech_wav = Path(speech_wav).resolve()
+        validate_wav_file(speech_wav)
+
+        output_mp4 = Path(output_mp4).resolve()
+        output_mp4.parent.mkdir(parents=True, exist_ok=True)
+        tmp_mp4 = output_mp4.with_suffix(".tmp.mp4")
+
+        # Configure dimensions based on aspect ratio
+        ar = aspect_ratio.lower().strip()
+        if ar in ("vertical", "9:16", "reel", "story"):
+            w, h = 1080, 1920
+            wave_w, wave_h = 920, 320
+            title_y, author_y = 480, 560
+            margin_v = 360
+            title_size, author_size, sub_size = 46, 26, 28
+        elif ar in ("landscape", "16:9", "youtube"):
+            w, h = 1920, 1080
+            wave_w, wave_h = 1400, 260
+            title_y, author_y = 180, 250
+            margin_v = 140
+            title_size, author_size, sub_size = 48, 26, 30
+        else:  # square (1:1, 1080x1080)
+            w, h = 1080, 1080
+            wave_w, wave_h = 880, 260
+            title_y, author_y = 180, 250
+            margin_v = 120
+            title_size, author_size, sub_size = 44, 24, 28
+
+        temp_files: List[Path] = []
+        try:
+            # Prepare title text file if provided
+            last_bg = "bg0"
+            filter_steps = [f"color=c={bg_color}:s={w}x{h}:r=25[{last_bg}]"]
+
+            if title and title.strip():
+                t_file = output_mp4.with_name(f".tmp_title_{os.getpid()}.txt")
+                t_file.write_text(title.strip(), encoding="utf-8")
+                temp_files.append(t_file)
+                t_esc = str(t_file).replace("\\", "/").replace(":", "\\:")
+                filter_steps.append(
+                    f"[{last_bg}]drawtext=textfile='{t_esc}':font='Noto Sans Devanagari':fontsize={title_size}:fontcolor=white:x=(w-text_w)/2:y={title_y}[bg_title]"
+                )
+                last_bg = "bg_title"
+
+            if author and author.strip():
+                a_file = output_mp4.with_name(f".tmp_author_{os.getpid()}.txt")
+                a_file.write_text(author.strip(), encoding="utf-8")
+                temp_files.append(a_file)
+                a_esc = str(a_file).replace("\\", "/").replace(":", "\\:")
+                filter_steps.append(
+                    f"[{last_bg}]drawtext=textfile='{a_esc}':font='Noto Sans Devanagari':fontsize={author_size}:fontcolor=0x94A3B8:x=(w-text_w)/2:y={author_y}[bg_author]"
+                )
+                last_bg = "bg_author"
+
+            # Animated waveform overlay
+            filter_steps.append(
+                f"[0:a]showwaves=s={wave_w}x{wave_h}:mode=cline:colors={waveform_color}:scale=sqrt:draw=scale[wave_raw]"
+            )
+            filter_steps.append("[wave_raw]colorkey=0x000000:0.1:0.1[wave]")
+            filter_steps.append(f"[{last_bg}][wave]overlay=(W-w)/2:(H-h)/2[v_wave]")
+
+            # Optional burned subtitles
+            if subtitle_srt and Path(subtitle_srt).is_file():
+                s_esc = str(Path(subtitle_srt).resolve()).replace("\\", "/").replace(":", "\\:")
+                filter_steps.append(
+                    f"[v_wave]subtitles='{s_esc}':force_style='FontName=Noto Sans Devanagari,FontSize={sub_size},PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,Outline=2,Alignment=2,MarginV={margin_v}'[v_out]"
+                )
+            else:
+                filter_steps.append("[v_wave]null[v_out]")
+
+            filtergraph = ";".join(filter_steps)
+
+            cmd = [
+                str(self.ffmpeg_bin),
+                "-y",
+                "-i", str(speech_wav),
+                "-filter_complex", filtergraph,
+                "-map", "[v_out]",
+                "-map", "0:a",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-shortest",
+                str(tmp_mp4),
+            ]
+
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpeg Audiogram video export failed: {res.stderr}")
+
+            tmp_mp4.replace(output_mp4)
+            return output_mp4
+
+        finally:
+            for tf in temp_files:
+                if tf.exists():
+                    try:
+                        tf.unlink()
+                    except Exception:
+                        pass
+

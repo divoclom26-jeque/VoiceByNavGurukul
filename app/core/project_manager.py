@@ -345,6 +345,54 @@ class Project:
 
         return final_master_wav
 
+    def export_subtitles(
+        self,
+        format: str = "srt",
+        output_path: Optional[Path] = None,
+        include_speaker: bool = True,
+    ) -> Path:
+        """Export synchronized project subtitles as SRT or WebVTT."""
+        from app.core.subtitles import SubtitleGenerator
+        return SubtitleGenerator.export_from_project(
+            self,
+            format=format,
+            output_path=output_path,
+            include_speaker=include_speaker,
+        )
+
+    def export_audiogram(
+        self,
+        aspect_ratio: str = "square",
+        output_path: Optional[Path] = None,
+        burn_subtitles: bool = True,
+        waveform_color: str = "0x38BDF8",
+        bg_color: str = "0x0F172A",
+        pipeline: Optional[AudioPipeline] = None,
+    ) -> Path:
+        """Generate high-definition Audiogram social video (.MP4) with animated waveform and burned subtitles."""
+        pipeline = pipeline or AudioPipeline()
+        master_wav = self.exports_dir / f"{self.name}_master.wav"
+        if not master_wav.is_file():
+            master_wav = self.build_master_audio(output_format="wav", pipeline=pipeline)
+
+        if output_path is None:
+            output_path = self.exports_dir / f"{self.name}_audiogram_{aspect_ratio}.mp4"
+
+        srt_path = None
+        if burn_subtitles:
+            srt_path = self.export_subtitles(format="srt")
+
+        return pipeline.export_audiogram_video(
+            speech_wav=master_wav,
+            output_mp4=output_path,
+            title=self.name,
+            author="Voice Studio",
+            subtitle_srt=srt_path,
+            aspect_ratio=aspect_ratio,
+            waveform_color=waveform_color,
+            bg_color=bg_color,
+        )
+
     def retake_block(
         self,
         block_id: int,
