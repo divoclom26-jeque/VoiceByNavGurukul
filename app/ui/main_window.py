@@ -27,6 +27,7 @@ from app.core.text_processor import TextProcessor
 from app.tts import PiperTTSEngine, list_local_voices
 from app.ui.components.block_table import BlockTableWidget
 from app.ui.components.editor_widget import EditorWidget
+from app.ui.components.mixer_widget import PodcastMixerWidget
 from app.ui.components.player_widget import AudioPlayerWidget
 from app.ui.components.project_history import ProjectHistoryWidget
 from app.ui.components.voice_gallery import VoiceGalleryWidget
@@ -74,13 +75,15 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.page_studio = self._build_studio_page()
         self.page_blocks = BlockTableWidget()
+        self.page_mixer = PodcastMixerWidget()
         self.page_gallery = VoiceGalleryWidget()
         self.page_projects = ProjectHistoryWidget()
 
         self.stack.addWidget(self.page_studio)    # index 0
         self.stack.addWidget(self.page_blocks)    # index 1
-        self.stack.addWidget(self.page_gallery)   # index 2
-        self.stack.addWidget(self.page_projects)  # index 3
+        self.stack.addWidget(self.page_mixer)     # index 2
+        self.stack.addWidget(self.page_gallery)   # index 3
+        self.stack.addWidget(self.page_projects)  # index 4
 
         main_layout.addWidget(self.stack, stretch=1)
 
@@ -116,18 +119,24 @@ class MainWindow(QMainWindow):
         self.btn_nav_blocks.setProperty("class", "nav-btn")
         self.nav_group.addButton(self.btn_nav_blocks, 1)
 
+        self.btn_nav_mixer = QPushButton("🎚️ Podcast & Mixer")
+        self.btn_nav_mixer.setCheckable(True)
+        self.btn_nav_mixer.setProperty("class", "nav-btn")
+        self.nav_group.addButton(self.btn_nav_mixer, 2)
+
         self.btn_nav_gallery = QPushButton("🌐 Voice Gallery")
         self.btn_nav_gallery.setCheckable(True)
         self.btn_nav_gallery.setProperty("class", "nav-btn")
-        self.nav_group.addButton(self.btn_nav_gallery, 2)
+        self.nav_group.addButton(self.btn_nav_gallery, 3)
 
         self.btn_nav_projects = QPushButton("📚 Projects & History")
         self.btn_nav_projects.setCheckable(True)
         self.btn_nav_projects.setProperty("class", "nav-btn")
-        self.nav_group.addButton(self.btn_nav_projects, 3)
+        self.nav_group.addButton(self.btn_nav_projects, 4)
 
         layout.addWidget(self.btn_nav_studio)
         layout.addWidget(self.btn_nav_blocks)
+        layout.addWidget(self.btn_nav_mixer)
         layout.addWidget(self.btn_nav_gallery)
         layout.addWidget(self.btn_nav_projects)
 
@@ -311,6 +320,11 @@ class MainWindow(QMainWindow):
             lambda path, title: (self.player.load_audio(path, title), self.player.play())
         )
 
+        # Mixer studio signals
+        self.page_mixer.play_audio_requested.connect(
+            lambda path, title: (self.player.load_audio(path, title), self.player.play())
+        )
+
         # Projects history signals
         self.page_projects.play_audio_requested.connect(
             lambda path, title: (self.player.load_audio(path, title), self.player.play())
@@ -428,6 +442,7 @@ class MainWindow(QMainWindow):
             if p_dir.is_dir():
                 proj = Project.load(p_dir)
                 self.page_blocks.load_project(proj)
+                self.page_mixer.load_project(proj)
         except Exception as e:
             logger.warning(f"Could not load project into blocks page: {e}")
 
@@ -449,6 +464,7 @@ class MainWindow(QMainWindow):
             p_dir = Path(project_dir_str)
             proj = Project.load(p_dir)
             self.page_blocks.load_project(proj)
+            self.page_mixer.load_project(proj)
             self.editor.set_project_name(proj.name)
             # Reconstruct text in editor
             all_text = "\n\n".join(b.text for b in proj.blocks)

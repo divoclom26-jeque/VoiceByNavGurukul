@@ -85,12 +85,10 @@ class AudioPipeline:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_output = output_path.with_suffix(".tmp.wav")
 
-        # Create temporary concat demuxer manifest
         concat_txt = output_path.with_suffix(".concat.txt")
         pause_wav = None
 
         try:
-            # If pause is requested, synthesize a short silence WAV to insert between items
             lines = []
             if pause_ms > 0 and len(wav_files) > 1:
                 pause_wav = output_path.parent / f"_pause_{pause_ms}ms.wav"
@@ -157,26 +155,95 @@ class AudioPipeline:
         tmp_wav.replace(output_wav)
         return output_wav
 
+    def mix_background_music(
+        self,
+        speech_wav: Path,
+        music_file: Path,
+        output_wav: Path,
+        music_volume: float = 0.22,
+        ducking_ratio: float = 6.0,
+        ducking_threshold: float = 0.03,
+        attack_ms: int = 100,
+        release_ms: int = 800,
+        fade_out_sec: float = 2.0,
+    ) -> Path:
+        """Mix speech narration with background music using real-time auto-ducking and end fadeout.
+        
+        Whenever speech is active, the background music volume automatically attenuates.
+        """
+        speech_wav = Path(speech_wav).resolve()
+        music_file = Path(music_file).resolve()
+        output_wav = Path(output_wav).resolve()
+        output_wav.parent.mkdir(parents=True, exist_ok=True)
+
+        if not speech_wav.is_file():
+            raise FileNotFoundError(f"Speech WAV not found: {speech_wav}")
+        if not music_file.is_file():
+            raise FileNotFoundError(f"Music file not found: {music_file}")
+
+        speech_info = validate_wav_file(speech_wav)
+        speech_dur = speech_info["duration"]
+
+        fade_start = max(0.0, speech_dur - fade_out_sec)
+        tmp_wav = output_wav.with_suffix(".tmp.wav")
+
+        # Sidechain compression filtergraph:
+        # [1:a] loops music, sets base volume, fades out at speech end
+        # sidechaincompress ducks music when [0:a] (voice) speaks
+        # amix sums the speech and ducked music together
+        filtergraph = (
+            f"[1:a]volume={music_volume:.3f},"
+            f"afade=t=out:st={fade_start:.2f}:d={fade_out_sec:.2f}[bg_faded];"
+            f"[bg_faded][0:a]sidechaincompress="
+            f"threshold={ducking_threshold}:ratio={ducking_ratio}:attack={attack_ms}:release={release_ms}[ducked];"
+            f"[0:a][ducked]amix=inputs=2:duration=first:dropout_transition=0:weights=1 1[out]"
+        )
+
+        cmd = [
+            str(self.ffmpeg_bin),
+            "-y",
+            "-i", str(speech_wav),
+            "-stream_loop", "-1",
+            "-i", str(music_file),
+            "-filter_complex", filtergraph,
+            "-map", "[out]",
+            "-c:a", "pcm_s16le",
+            str(tmp_wav),
+        ]
+
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg music mix failed: {res.stderr}")
+
+        validate_wav_file(tmp_wav)
+        tmp_wav.replace(output_wav)
+        return output_wav
+
     def export_to_mp3(
         self,
         input_wav: Path,
         output_mp3: Path,
         bitrate: str = "192k",
         metadata: Optional[Dict[str, str]] = None,
+        cover_image: Optional[Path] = None,
     ) -> Path:
-        """Export audio to MP3 with optional ID3 metadata tags."""
+        """Export audio to MP3 with ID3 tags and optional embedded cover art."""
         input_wav = Path(input_wav).resolve()
         output_mp3 = Path(output_mp3).resolve()
         output_mp3.parent.mkdir(parents=True, exist_ok=True)
         tmp_mp3 = output_mp3.with_suffix(".tmp.mp3")
 
-        cmd = [
-            str(self.ffmpeg_bin),
-            "-y",
-            "-i", str(input_wav),
-            "-c:a", "libmp3lame",
-            "-b:a", bitrate,
-        ]
+        cmd = [str(self.ffmpeg_bin), "-y", "-i", str(input_wav)]
+
+        has_cover = cover_image and Path(cover_image).is_file()
+        if has_cover:
+            cmd.extend(["-i", str(cover_image)])
+            cmd.extend(["-map", "0:a", "-map", "1:v", "-c:v", "copy", "-id3v2_version", "3"])
+            cmd.extend(["-metadata:s:v", 'title="Album cover"', "-metadata:s:v", 'comment="Cover (front)"'])
+        else:
+            cmd.extend(["-map", "0:a"])
+
+        cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate])
 
         if metadata:
             for k, v in metadata.items():
@@ -190,3 +257,101 @@ class AudioPipeline:
 
         tmp_mp3.replace(output_mp3)
         return output_mp3
+
+    def export_to_m4b(
+        self,
+        input_wav: Path,
+        output_m4b: Path,
+        bitrate: str = "128k",
+        metadata: Optional[Dict[str, str]] = None,
+        chapters: Optional[List[Dict[str, Any]]] = None,
+        cover_image: Optional[Path] = None,
+    ) -> Path:
+        """Export to M4B audiobook format with AAC audio, chapter marks, and cover art."""
+        input_wav = Path(input_wav).resolve()
+        output_m4b = Path(output_m4b).resolve()
+        output_m4b.parent.mkdir(parents=True, exist_ok=True)
+        tmp_m4b = output_m4b.with_suffix(".tmp.m4b")
+
+        meta_txt = output_m4b.with_suffix(".ffmetadata.txt")
+        try:
+            # Generate FFmpeg metadata text for chapters
+            meta_lines = [";FFMETADATA1"]
+            if metadata:
+                for k, v in metadata.items():
+                    meta_lines.append(f"{k}={v}")
+
+            if chapters:
+                for ch in chapters:
+                    meta_lines.append("[CHAPTER]")
+                    meta_lines.append("TIMEBASE=1/1000")
+                    meta_lines.append(f"START={int(ch.get('start_ms', 0))}")
+                    meta_lines.append(f"END={int(ch.get('end_ms', 0))}")
+                    meta_lines.append(f"title={ch.get('title', 'Chapter')}")
+
+            meta_txt.write_text("\n".join(meta_lines), encoding="utf-8")
+
+            cmd = [
+                str(self.ffmpeg_bin),
+                "-y",
+                "-i", str(input_wav),
+                "-i", str(meta_txt),
+            ]
+
+            has_cover = cover_image and Path(cover_image).is_file()
+            if has_cover:
+                cmd.extend(["-i", str(cover_image)])
+                cmd.extend(["-map", "0:a", "-map", "2:v", "-c:v", "copy", "-disposition:v", "attached_pic"])
+            else:
+                cmd.extend(["-map", "0:a"])
+
+            cmd.extend([
+                "-map_metadata", "1",
+                "-c:a", "aac",
+                "-b:a", bitrate,
+                "-f", "mp4",
+                str(tmp_m4b),
+            ])
+
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(f"FFmpeg M4B export failed: {res.stderr}")
+
+            tmp_m4b.replace(output_m4b)
+            return output_m4b
+
+        finally:
+            if meta_txt.exists():
+                meta_txt.unlink()
+
+    def export_to_flac(
+        self,
+        input_wav: Path,
+        output_flac: Path,
+        metadata: Optional[Dict[str, str]] = None,
+    ) -> Path:
+        """Export audio to lossless FLAC container."""
+        input_wav = Path(input_wav).resolve()
+        output_flac = Path(output_flac).resolve()
+        output_flac.parent.mkdir(parents=True, exist_ok=True)
+        tmp_flac = output_flac.with_suffix(".tmp.flac")
+
+        cmd = [
+            str(self.ffmpeg_bin),
+            "-y",
+            "-i", str(input_wav),
+            "-c:a", "flac",
+        ]
+
+        if metadata:
+            for k, v in metadata.items():
+                cmd.extend(["-metadata", f"{k}={v}"])
+
+        cmd.append(str(tmp_flac))
+
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg FLAC export failed: {res.stderr}")
+
+        tmp_flac.replace(output_flac)
+        return output_flac

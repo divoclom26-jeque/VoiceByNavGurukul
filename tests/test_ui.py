@@ -7,6 +7,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 from PySide6.QtWidgets import QApplication
 from app.ui.components.block_table import BlockTableWidget
 from app.ui.components.editor_widget import EditorWidget
+from app.ui.components.mixer_widget import PodcastMixerWidget
 from app.ui.components.player_widget import AudioPlayerWidget
 from app.ui.components.project_history import ProjectHistoryWidget
 from app.ui.components.voice_gallery import VoiceGalleryWidget
@@ -27,12 +28,13 @@ def test_main_window_instantiation(qapp):
     window = MainWindow()
     assert window is not None
     assert window.windowTitle() != ""
-    assert window.stack.count() == 4
+    assert window.stack.count() == 5
 
     # Check child widgets exist
     assert isinstance(window.editor, EditorWidget)
     assert isinstance(window.player, AudioPlayerWidget)
     assert isinstance(window.page_blocks, BlockTableWidget)
+    assert isinstance(window.page_mixer, PodcastMixerWidget)
     assert isinstance(window.page_gallery, VoiceGalleryWidget)
     assert isinstance(window.page_projects, ProjectHistoryWidget)
 
