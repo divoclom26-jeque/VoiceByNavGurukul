@@ -66,11 +66,14 @@ class StudioInterface(QWidget):
         self.txt_title.setText("My Audio Story")
         self.txt_title.setPlaceholderText("Enter project name...")
 
+        self.btn_lexicon = PushButton(FluentIcon.DICTIONARY, "Pronunciation", self)
+        self.btn_lexicon.setToolTip("Customize phonetic word substitutions & acronyms")
         self.btn_import = PushButton(FluentIcon.FOLDER, "Open File", self)
         self.btn_clear = PushButton(FluentIcon.DELETE, "Clear", self)
 
         title_row.addWidget(lbl_proj)
         title_row.addWidget(self.txt_title, stretch=1)
+        title_row.addWidget(self.btn_lexicon)
         title_row.addWidget(self.btn_import)
         title_row.addWidget(self.btn_clear)
         editor_layout.addLayout(title_row)
@@ -189,6 +192,7 @@ class StudioInterface(QWidget):
         self.text_edit.textChanged.connect(self._update_metrics)
         self.btn_clear.clicked.connect(self.text_edit.clear)
         self.btn_import.clicked.connect(self._import_file)
+        self.btn_lexicon.clicked.connect(self._open_lexicon_dialog)
 
         self.slider_speed.valueChanged.connect(
             lambda v: self.lbl_speed.setText(f"Speech Speed: {v / 100.0:.2f}x")
@@ -224,6 +228,18 @@ class StudioInterface(QWidget):
             content = p.read_text(encoding="utf-8", errors="replace")
             self.text_edit.setPlainText(content)
             self.txt_title.setText(p.stem.replace("_", " ").title())
+
+    def _open_lexicon_dialog(self):
+        from app.ui.fluent.lexicon_dialog import LexiconDialog
+
+        project_name = self.txt_title.text().strip() or "Untitled Story"
+        safe_name = "".join(c for c in project_name if c.isalnum() or c in (" ", "-", "_")).strip()
+        safe_name = safe_name.replace(" ", "_")
+        proj_dir = PROJECT_ROOT / "projects" / safe_name if safe_name else None
+
+        dialog = LexiconDialog(parent=self.window(), project_dir=proj_dir)
+        dialog.rules_updated.connect(self._update_metrics)
+        dialog.exec()
 
     def _test_voice(self):
         voice_key = self.combo_voices.currentData()

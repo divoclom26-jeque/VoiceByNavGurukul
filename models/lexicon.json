@@ -1,0 +1,32 @@
+{
+  "NavGurukul": {
+    "replacement": "नवगुरुकुल",
+    "whole_word": true,
+    "case_sensitive": false,
+    "notes": "Non-profit organization name"
+  },
+  "SQL": {
+    "replacement": "सीक्वेल",
+    "whole_word": true,
+    "case_sensitive": true,
+    "notes": "Structured Query Language"
+  },
+  "PyTorch": {
+    "replacement": "पाई-टॉर्च",
+    "whole_word": true,
+    "case_sensitive": false,
+    "notes": "Machine learning framework"
+  },
+  "FastAPI": {
+    "replacement": "फास्ट एपीआई",
+    "whole_word": true,
+    "case_sensitive": false,
+    "notes": "Python web framework"
+  },
+  "AI": {
+    "replacement": "ए-आई",
+    "whole_word": true,
+    "case_sensitive": true,
+    "notes": "Artificial Intelligence"
+  }
+}

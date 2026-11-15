@@ -76,7 +76,17 @@ class FluentMainWindow(FluentWindow):
             position=NavigationItemPosition.BOTTOM,
         )
 
-        # 6. Add 1-Click Dark/Light Mode Toggle Switch in Sidebar
+        # 6. Add Pronunciation Lexicon and Theme Toggle in Sidebar
+        self.navigationInterface.addItem(
+            routeKey="lexicon_dialog",
+            icon=FluentIcon.DICTIONARY,
+            text="Pronunciation",
+            onClick=self._open_lexicon_dialog,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM,
+            tooltip="Manage phonetic pronunciation rules & acronyms",
+        )
+
         self.theme_btn = self.navigationInterface.addItem(
             routeKey="theme_toggle",
             icon=FluentIcon.CONSTRACT,
@@ -89,6 +99,13 @@ class FluentMainWindow(FluentWindow):
 
         # 7. Connect Inter-Component Signals
         self._connect_signals()
+
+    def _open_lexicon_dialog(self):
+        """Open the Lexicon & Pronunciation Dictionary Dialog."""
+        from app.ui.fluent.lexicon_dialog import LexiconDialog
+
+        dialog = LexiconDialog(parent=self)
+        dialog.exec()
 
     def _toggle_theme(self):
         """Toggle dynamically between Modern Light and Dark theme."""

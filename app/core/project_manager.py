@@ -333,7 +333,7 @@ class ProjectManager:
 
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        raw_blocks = TextProcessor.split_into_blocks(text, max_chars=max_chars)
+        raw_blocks = TextProcessor.split_into_blocks(text, max_chars=max_chars, project_dir=project_dir)
         text_blocks = [
             TextBlock(id=i + 1, text=block_text)
             for i, block_text in enumerate(raw_blocks)

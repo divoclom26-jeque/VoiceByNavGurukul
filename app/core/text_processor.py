@@ -1,3 +1,4 @@
+from pathlib import Path
 import re
 from typing import Dict, List, Optional
 try:
@@ -143,8 +144,14 @@ class TextProcessor:
         expand_abbreviations: bool = True,
         convert_numbers_to_words: bool = False,
         lang: str = "en",
+        project_dir: Optional[Path] = None,
+        apply_lexicon: bool = True,
     ) -> str:
         """Full text pre-processing pipeline for speech synthesis."""
+        if apply_lexicon:
+            from app.core.lexicon import LexiconManager
+            text = LexiconManager.apply_lexicon(text, project_dir=project_dir)
+
         cleaned = cls.clean_markdown(text)
         if expand_abbreviations:
             cleaned = cls.normalize_abbreviations(cleaned)
@@ -162,6 +169,8 @@ class TextProcessor:
         max_chars: int = 280,
         expand_abbreviations: bool = True,
         lang: str = "en",
+        project_dir: Optional[Path] = None,
+        apply_lexicon: bool = True,
     ) -> List[str]:
         """Split long text into safe, pronounceable sentence/clause blocks.
         
@@ -172,6 +181,8 @@ class TextProcessor:
             text,
             expand_abbreviations=expand_abbreviations,
             lang=lang,
+            project_dir=project_dir,
+            apply_lexicon=apply_lexicon,
         )
 
         paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
