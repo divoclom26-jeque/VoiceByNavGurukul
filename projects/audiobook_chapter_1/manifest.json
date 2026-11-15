@@ -1,0 +1,20 @@
+{
+  "name": "Audiobook Chapter 1",
+  "voice_key": "hi_IN-pratham-medium",
+  "speed": 1.0,
+  "updated_at": "2026-11-15T11:57:07.026586",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "एक समय की बात है। एक छोटे से गाँव में एक जिज्ञासु बालक रहता था।\nउसका सपना था कि वह एक दिन पूरी दुनिया की सैर करेगा।\nहर शाम वह गाँव के किनारे बैठकर दूर क्षितिज को देखता था।\nउसे विश्वास था कि एक दिन उसकी मेहनत ज़रूर रंग लाएगी।",
+      "audio_file": "segments/block_0001.wav",
+      "status": "completed",
+      "duration": 16.253968253968253,
+      "error_message": null
+    }
+  ],
+  "metadata": {
+    "source_char_count": 224,
+    "block_count": 1
+  }
+}

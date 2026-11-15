@@ -1,7 +1,12 @@
 import os
-import wave
 from pathlib import Path
 from typing import Any, Dict
+import wave
+
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
 
 
 class InvalidWavError(Exception):
@@ -12,7 +17,8 @@ class InvalidWavError(Exception):
 def validate_wav_file(path: Path) -> Dict[str, Any]:
     """Validate that the given file is a non-empty, well-formed WAV file.
     
-    Returns a dictionary of audio characteristics.
+    Uses soundfile (supporting standard PCM and WAVE_FORMAT_EXTENSIBLE) with
+    fallback to wave stdlib.
     """
     if not path.is_file():
         raise InvalidWavError(f"WAV file does not exist: {path}")
@@ -21,6 +27,27 @@ def validate_wav_file(path: Path) -> Dict[str, Any]:
     if size_bytes < 44:  # Minimum standard WAV header size
         raise InvalidWavError(f"WAV file is too small ({size_bytes} bytes), header incomplete: {path}")
 
+    # Prefer soundfile as it supports WAVE_FORMAT_EXTENSIBLE (65534 / 0xFFFE) from FFmpeg
+    if sf is not None:
+        try:
+            info = sf.info(str(path))
+            if info.frames == 0 or info.duration <= 0:
+                raise InvalidWavError(f"WAV file contains 0 audio frames: {path}")
+
+            return {
+                "channels": info.channels,
+                "framerate": info.samplerate,
+                "n_frames": info.frames,
+                "duration": info.duration,
+                "size_bytes": size_bytes,
+                "subtype": info.subtype,
+            }
+        except Exception as e:
+            if isinstance(e, InvalidWavError):
+                raise
+            raise InvalidWavError(f"Failed to read WAV via soundfile from {path}: {e}") from e
+
+    # Fallback to stdlib wave
     try:
         with wave.open(str(path), "rb") as wf:
             channels = wf.getnchannels()

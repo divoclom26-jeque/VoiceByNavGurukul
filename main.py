@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from app.core import AudioPipeline, Project, ProjectManager, TextProcessor
 from app.tts import (
     PiperTTSEngine,
     download_piper_voice,
@@ -11,7 +12,7 @@ from app.tts import (
     list_local_voices,
 )
 from app.utils.atomic_audio import validate_wav_file
-from app.utils.paths import ensure_directories, get_piper_executable
+from app.utils.paths import PROJECTS_DIR, ensure_directories
 
 
 def cmd_voices(args):
@@ -79,7 +80,6 @@ def cmd_download(args):
 
 def cmd_synthesize(args):
     """Synthesize text to WAV file."""
-    # Determine text
     if args.file:
         file_path = Path(args.file)
         if not file_path.is_file():
@@ -92,21 +92,18 @@ def cmd_synthesize(args):
         print("[!] Error: Either --text or --file must be specified.")
         sys.exit(1)
 
-    # Check voices
     voices = list_local_voices()
     if not voices:
         print("[!] No voice models found locally. Auto-downloading 'en_US-lessac-low'...")
         download_piper_voice("en_US-lessac-low")
         voices = list_local_voices()
 
-    # Find chosen voice
     voice_map = {v["key"]: v for v in voices}
     selected_voice = None
     if args.voice:
         if args.voice in voice_map:
             selected_voice = voice_map[args.voice]
         else:
-            # Check partial match
             candidates = [v for k, v in voice_map.items() if args.voice.lower() in k.lower()]
             if candidates:
                 selected_voice = candidates[0]
@@ -116,7 +113,6 @@ def cmd_synthesize(args):
     else:
         selected_voice = voices[0]
 
-    # Configure voice config
     voice_config = dict(selected_voice)
     voice_config["speed"] = args.speed
     if args.speaker is not None:
@@ -126,9 +122,12 @@ def cmd_synthesize(args):
     print(f"[*] Synthesizing using voice: {selected_voice['key']} (speed: {args.speed}x)")
     print(f"    Output: {output_path}")
 
+    # Process text through clean_text_for_speech
+    cleaned_text = TextProcessor.clean_text_for_speech(text)
+
     engine = PiperTTSEngine()
     try:
-        engine.synthesize_to_wav(text, output_path, voice_config)
+        engine.synthesize_to_wav(cleaned_text, output_path, voice_config)
         info = validate_wav_file(output_path)
         print(f"[+] Success! Audio saved to: {output_path}")
         print(f"    Duration:    {info['duration']:.2f} seconds")
@@ -138,6 +137,111 @@ def cmd_synthesize(args):
     except Exception as e:
         print(f"[!] Synthesis failed: {e}")
         sys.exit(1)
+
+
+def cmd_chunk(args):
+    """Preview text cleaning and chunking."""
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8")
+    else:
+        text = args.text or ""
+
+    blocks = TextProcessor.split_into_blocks(text, max_chars=args.max_chars)
+    print(f"\n[+] Text broken into {len(blocks)} blocks (max_chars={args.max_chars}):")
+    print("=" * 70)
+    for i, b in enumerate(blocks, 1):
+        print(f"[{i:02d}] ({len(b)} chars): {b}")
+    print("=" * 70)
+    print()
+
+
+def cmd_create_project(args):
+    """Create a long-form audio production project."""
+    if args.file:
+        text = Path(args.file).read_text(encoding="utf-8")
+    else:
+        text = args.text or ""
+
+    voices = list_local_voices()
+    voice_keys = [v["key"] for v in voices]
+    voice_key = args.voice
+    if not voice_key or voice_key not in voice_keys:
+        if voices:
+            voice_key = voices[0]["key"]
+            print(f"[*] Using default voice: {voice_key}")
+        else:
+            print("[!] Please download a voice first: python main.py download -v en_US-lessac-low")
+            sys.exit(1)
+
+    project = ProjectManager.create_project(
+        name=args.name,
+        text=text,
+        voice_key=voice_key,
+        speed=args.speed,
+        max_chars=args.max_chars,
+    )
+    print(f"\n[+] Created project: '{project.name}'")
+    print(f"    Location: {project.project_dir}")
+    print(f"    Total Blocks: {len(project.blocks)}")
+    print(f"    To render all blocks, run: python main.py render-project --name {project.project_dir.name}\n")
+
+
+def cmd_render_project(args):
+    """Render all blocks of a project and build master audio."""
+    project_dir = PROJECTS_DIR / args.name
+    if not project_dir.is_dir():
+        print(f"[!] Project directory not found: {project_dir}")
+        sys.exit(1)
+
+    project = Project.load(project_dir)
+    print(f"\n[*] Rendering Project: {project.name} ({len(project.blocks)} blocks, Voice: {project.voice_key})")
+
+    def progress(cur, tot, msg):
+        print(f"    [{cur}/{tot}] {msg}")
+
+    project.synthesize_all(progress_callback=progress, force_rebuild=args.force)
+
+    print("\n[*] Building master audio (pause: 350ms, loudnorm: True)...")
+    fmt = "mp3" if args.mp3 else "wav"
+    master_file = project.build_master_audio(output_format=fmt, pause_ms=args.pause)
+    info = validate_wav_file(master_file) if fmt == "wav" else {"size_bytes": master_file.stat().st_size}
+
+    print(f"[+] Master Audio Ready: {master_file}")
+    if "duration" in info:
+        print(f"    Total Duration: {info['duration']:.2f} seconds")
+    print(f"    File Size: {info['size_bytes'] / 1024:.1f} KB\n")
+
+
+def cmd_render_block(args):
+    """Re-synthesize a single block in a project."""
+    project_dir = PROJECTS_DIR / args.name
+    project = Project.load(project_dir)
+
+    print(f"[*] Re-synthesizing Block {args.block_id} in {project.name}...")
+    block = project.synthesize_block(args.block_id)
+    if block.status == "completed":
+        print(f"[+] Block {block.id} synthesized successfully!")
+        print(f"    Duration: {block.duration:.2f}s")
+        print(f"    Audio: {project.project_dir / block.audio_file}\n")
+    else:
+        print(f"[!] Block {block.id} failed: {block.error_message}\n")
+
+
+def cmd_list_projects(args):
+    """List all user projects."""
+    projects = ProjectManager.list_projects()
+    if not projects:
+        print("\n[!] No projects found in projects/.\n")
+        return
+
+    print(f"\n[+] Projects ({len(projects)}):")
+    print("-" * 75)
+    print(f"{'SLUG':<25} {'NAME':<20} {'VOICE':<20} {'BLOCKS':<8}")
+    print("-" * 75)
+    for p in projects:
+        print(f"{p['id']:<25} {p['name']:<20} {p['voice_key']:<20} {p['blocks']:<8}")
+    print("-" * 75)
+    print()
 
 
 def main():
@@ -172,6 +276,41 @@ def main():
     sub_syn.add_argument("--speed", type=float, default=1.0, help="Speech speed multiplier (0.5 to 2.0)")
     sub_syn.add_argument("--speaker", type=int, default=None, help="Speaker ID for multi-speaker voices")
     sub_syn.set_defaults(func=cmd_synthesize)
+
+    # Command: chunk-text
+    sub_chk = subparsers.add_parser("chunk-text", help="Preview text cleaning and chunking")
+    sub_chk.add_argument("--text", "-t", type=str, help="Text string")
+    sub_chk.add_argument("--file", "-f", type=str, help="Text file to read")
+    sub_chk.add_argument("--max-chars", "-m", type=int, default=280, help="Max characters per block")
+    sub_chk.set_defaults(func=cmd_chunk)
+
+    # Command: create-project
+    sub_cp = subparsers.add_parser("create-project", help="Create a new long-form audio project")
+    sub_cp.add_argument("--name", "-n", type=str, required=True, help="Project name")
+    sub_cp.add_argument("--file", "-f", type=str, help="Source text/markdown file")
+    sub_cp.add_argument("--text", "-t", type=str, help="Source text")
+    sub_cp.add_argument("--voice", "-v", type=str, help="Voice key")
+    sub_cp.add_argument("--speed", type=float, default=1.0, help="Speech speed")
+    sub_cp.add_argument("--max-chars", type=int, default=280, help="Max characters per chunk")
+    sub_cp.set_defaults(func=cmd_create_project)
+
+    # Command: render-project
+    sub_rp = subparsers.add_parser("render-project", help="Render all blocks of a project and build master audio")
+    sub_rp.add_argument("--name", "-n", type=str, required=True, help="Project slug or directory name")
+    sub_rp.add_argument("--pause", type=int, default=350, help="Pause duration between chunks in ms")
+    sub_rp.add_argument("--mp3", action="store_true", help="Export to MP3 instead of WAV")
+    sub_rp.add_argument("--force", action="store_true", help="Force re-rendering completed blocks")
+    sub_rp.set_defaults(func=cmd_render_project)
+
+    # Command: render-block
+    sub_rb = subparsers.add_parser("render-block", help="Re-synthesize a single block in a project")
+    sub_rb.add_argument("--name", "-n", type=str, required=True, help="Project slug or directory name")
+    sub_rb.add_argument("--block-id", "-b", type=int, required=True, help="Block ID to synthesize")
+    sub_rb.set_defaults(func=cmd_render_block)
+
+    # Command: list-projects
+    sub_lp = subparsers.add_parser("list-projects", help="List all projects")
+    sub_lp.set_defaults(func=cmd_list_projects)
 
     args = parser.parse_args()
     if not args.command:

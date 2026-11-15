@@ -1,0 +1,44 @@
+{
+  "name": "Test Audiobook Project",
+  "voice_key": "en_US-lessac-low",
+  "speed": 1.0,
+  "updated_at": "2026-11-15T11:56:19.630732",
+  "blocks": [
+    {
+      "id": 1,
+      "text": "Once upon a time in a digital studio, an autonomous audio engine was created.",
+      "audio_file": "segments/block_0001.wav",
+      "status": "completed",
+      "duration": 4.624,
+      "error_message": null
+    },
+    {
+      "id": 2,
+      "text": "It processed long text effortlessly and with incredible speed.",
+      "audio_file": "segments/block_0002.wav",
+      "status": "completed",
+      "duration": 3.632,
+      "error_message": null
+    },
+    {
+      "id": 3,
+      "text": "Each block was rendered locally with crystal-clear fidelity.",
+      "audio_file": "segments/block_0003.wav",
+      "status": "completed",
+      "duration": 3.136,
+      "error_message": null
+    },
+    {
+      "id": 4,
+      "text": "Finally, all segments joined together into a magnificent audiobook.",
+      "audio_file": "segments/block_0004.wav",
+      "status": "completed",
+      "duration": 4.32,
+      "error_message": null
+    }
+  ],
+  "metadata": {
+    "source_char_count": 243,
+    "block_count": 4
+  }
+}
