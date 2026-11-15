@@ -31,6 +31,8 @@ def test_fluent_audio_player_bar(qapp, tmp_path: Path):
     assert player is not None
     assert player.lbl_title.text() == "No audio loaded"
     assert not player.btn_play.isEnabled()
+    assert not player.btn_download.isEnabled()
+    assert not player.btn_open_folder.isEnabled()
 
     # Create dummy wav
     import wave
@@ -45,21 +47,41 @@ def test_fluent_audio_player_bar(qapp, tmp_path: Path):
     assert "Test Audio" in player.lbl_title.text()
     assert player.btn_play.isEnabled()
     assert player.btn_stop.isEnabled()
+    assert player.btn_download.isEnabled()
+    assert player.btn_open_folder.isEnabled()
 
     player.stop()
     player.deleteLater()
     qapp.processEvents()
 
 
-def test_fluent_studio_interface_metrics(qapp):
-    """Test StudioInterface word count and character count metrics."""
+def test_fluent_studio_interface_metrics(qapp, tmp_path: Path):
+    """Test StudioInterface word count, character count metrics, and download buttons."""
     studio = StudioInterface()
     assert studio.objectName() == "studio_interface"
+    assert hasattr(studio, "btn_download_master")
+    assert hasattr(studio, "btn_open_folder")
+    assert not studio.btn_download_master.isEnabled()
+    assert not studio.btn_open_folder.isEnabled()
 
     studio.text_edit.setPlainText("Ek baar ki baat hai, ek bada sher tha.")
     stats_text = studio.lbl_metrics.text()
     assert "Words:" in stats_text
     assert "Chars:" in stats_text
+
+    # Test download enablement on finished
+    test_wav = tmp_path / "demo_master.wav"
+    import wave
+    with wave.open(str(test_wav), "w") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(22050)
+        f.writeframes(b"\x00\x00" * 500)
+
+    studio._on_finished(str(test_wav), 1.2, "Demo Master")
+    assert studio.btn_download_master.isEnabled()
+    assert studio.btn_open_folder.isEnabled()
+    assert studio.last_master_path == test_wav
 
     studio.deleteLater()
     qapp.processEvents()

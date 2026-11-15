@@ -1,4 +1,8 @@
+import logging
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -30,6 +34,8 @@ from app.core.text_processor import TextProcessor
 from app.tts import PiperTTSEngine, list_local_voices
 from app.ui.workers import SynthesisWorker
 from app.utils.paths import PROJECT_ROOT
+
+logger = logging.getLogger(__name__)
 
 
 class StudioInterface(QWidget):
@@ -187,6 +193,24 @@ class StudioInterface(QWidget):
         self.btn_generate = PrimaryPushButton(FluentIcon.MICROPHONE, "Generate Studio Audio", self)
         self.btn_generate.setFixedHeight(40)
         settings_layout.addWidget(self.btn_generate)
+
+        # Download & Folder Action Buttons
+        export_row = QHBoxLayout()
+        export_row.setSpacing(8)
+
+        self.btn_download_master = PushButton(FluentIcon.DOWNLOAD, "Save Audio As...", self)
+        self.btn_download_master.setToolTip("Save/download generated master audio to any folder")
+        self.btn_download_master.setEnabled(False)
+        self.btn_download_master.clicked.connect(self._on_download_master)
+
+        self.btn_open_folder = PushButton(FluentIcon.FOLDER, "Open Folder", self)
+        self.btn_open_folder.setToolTip("Open project exports folder in file manager")
+        self.btn_open_folder.setEnabled(False)
+        self.btn_open_folder.clicked.connect(self._on_open_folder)
+
+        export_row.addWidget(self.btn_download_master, stretch=2)
+        export_row.addWidget(self.btn_open_folder, stretch=1)
+        settings_layout.addLayout(export_row)
 
         main_layout.addWidget(self.settings_card, stretch=1)
 
@@ -383,16 +407,61 @@ class StudioInterface(QWidget):
         self.lbl_progress.setText(msg)
 
     def _on_finished(self, master_path: str, duration: float, project_name: str):
+        self.last_master_path = Path(master_path)
         self.btn_generate.setEnabled(True)
+        self.btn_download_master.setEnabled(True)
+        self.btn_open_folder.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.lbl_progress.setVisible(False)
         self.synthesis_completed.emit(master_path, duration, project_name)
         InfoBar.success(
             title="Generation Complete! 🎉",
-            content=f"Master audio saved ({duration:.1f}s)",
+            content=f"Master audio saved ({duration:.1f}s) — Click 'Save Audio As...' to export",
             parent=self,
             position=InfoBarPosition.TOP,
         )
+
+    def _on_download_master(self):
+        if not hasattr(self, "last_master_path") or not self.last_master_path or not self.last_master_path.is_file():
+            InfoBar.warning(title="No Audio", content="Please generate studio audio first.", parent=self)
+            return
+
+        ext = self.last_master_path.suffix.lower()
+        filter_str = f"Audio File (*{ext});;All Files (*)"
+        dest_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Audio File",
+            self.last_master_path.name,
+            filter_str,
+        )
+        if dest_path:
+            try:
+                shutil.copy2(self.last_master_path, dest_path)
+                InfoBar.success(
+                    title="Download Complete! 💾",
+                    content=f"Saved to {Path(dest_path).name}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                )
+            except Exception as e:
+                InfoBar.error(title="Save Failed", content=str(e), parent=self)
+
+    def _on_open_folder(self):
+        if hasattr(self, "last_master_path") and self.last_master_path and self.last_master_path.is_file():
+            folder = self.last_master_path.parent
+        else:
+            folder = PROJECT_ROOT / "projects"
+
+        try:
+            if sys.platform.startswith("linux"):
+                subprocess.Popen(["xdg-open", str(folder)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            elif sys.platform == "win32":
+                import os
+                os.startfile(str(folder))
+        except Exception as e:
+            logger.error("Failed to open file manager: %s", e)
 
     def _on_error(self, err_msg: str):
         self.btn_generate.setEnabled(True)

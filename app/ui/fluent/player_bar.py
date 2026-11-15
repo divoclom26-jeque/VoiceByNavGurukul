@@ -1,19 +1,27 @@
+import logging
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 from typing import Optional
 
 from PySide6.QtCore import QTime, QUrl, Qt
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
     CardWidget,
     FluentIcon,
+    InfoBar,
+    InfoBarPosition,
     Slider,
     TransparentToolButton,
 )
 
 from app.ui.fluent.waveform_widget import WaveformWidget
+
+logger = logging.getLogger(__name__)
 
 
 class FluentAudioPlayerBar(CardWidget):
@@ -78,11 +86,24 @@ class FluentAudioPlayerBar(CardWidget):
         controls_row.addWidget(self.lbl_vol_icon)
         controls_row.addWidget(self.vol_slider)
 
+        # Download & Folder Action Buttons
+        self.btn_download = TransparentToolButton(FluentIcon.DOWNLOAD, self)
+        self.btn_download.setEnabled(False)
+        self.btn_download.setToolTip("Save / Download Audio File As...")
+        controls_row.addWidget(self.btn_download)
+
+        self.btn_open_folder = TransparentToolButton(FluentIcon.FOLDER, self)
+        self.btn_open_folder.setEnabled(False)
+        self.btn_open_folder.setToolTip("Open Containing Folder in File Manager")
+        controls_row.addWidget(self.btn_open_folder)
+
         main_layout.addLayout(controls_row)
 
     def _connect_signals(self):
         self.btn_play.clicked.connect(self.toggle_play)
         self.btn_stop.clicked.connect(self.stop)
+        self.btn_download.clicked.connect(self._on_download_clicked)
+        self.btn_open_folder.clicked.connect(self._on_open_folder_clicked)
 
         self.vol_slider.valueChanged.connect(lambda v: self.audio_output.setVolume(v / 100.0))
 
@@ -93,6 +114,45 @@ class FluentAudioPlayerBar(CardWidget):
         self.player.durationChanged.connect(self._on_duration_changed)
         self.player.positionChanged.connect(self._on_position_changed)
         self.player.playbackStateChanged.connect(self._on_playback_state_changed)
+
+    def _on_download_clicked(self):
+        if not self.current_file or not self.current_file.is_file():
+            return
+
+        ext = self.current_file.suffix.lower()
+        filter_str = f"Audio File (*{ext});;All Files (*)"
+        dest_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Audio File As",
+            self.current_file.name,
+            filter_str,
+        )
+        if dest_path:
+            try:
+                shutil.copy2(self.current_file, dest_path)
+                InfoBar.success(
+                    title="Download Complete! 💾",
+                    content=f"Saved to {Path(dest_path).name}",
+                    parent=self.window(),
+                    position=InfoBarPosition.TOP,
+                )
+            except Exception as e:
+                InfoBar.error(title="Save Failed", content=str(e), parent=self.window())
+
+    def _on_open_folder_clicked(self):
+        if not self.current_file or not self.current_file.is_file():
+            return
+        folder = self.current_file.parent
+        try:
+            if sys.platform.startswith("linux"):
+                subprocess.Popen(["xdg-open", str(folder)])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(folder)])
+            elif sys.platform == "win32":
+                import os
+                os.startfile(str(folder))
+        except Exception as e:
+            logger.error("Failed to open file manager: %s", e)
 
     def _on_waveform_seek(self, position_ms: int):
         self.player.setPosition(position_ms)
@@ -110,6 +170,10 @@ class FluentAudioPlayerBar(CardWidget):
         self.player.setSource(QUrl.fromLocalFile(str(path)))
         self.btn_play.setEnabled(True)
         self.btn_stop.setEnabled(True)
+        self.btn_download.setEnabled(True)
+        self.btn_open_folder.setEnabled(True)
+        self.lbl_time.setText("00:00 / 00:00")
+        self.waveform.load_audio(str(path))
         self.lbl_time.setText("00:00 / 00:00")
         self.waveform.load_audio(str(path))
 
