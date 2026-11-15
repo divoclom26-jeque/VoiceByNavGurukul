@@ -113,6 +113,18 @@ class FluentAudioPlayerBar(CardWidget):
         self.lbl_time.setText("00:00 / 00:00")
         self.waveform.load_audio(str(path))
 
+    def seek_seconds(self, seconds: float):
+        """Seek player to exact timestamp in seconds."""
+        pos_ms = int(max(0.0, seconds) * 1000)
+        self.player.setPosition(pos_ms)
+        self.waveform.set_position(pos_ms)
+        self._update_time_label(pos_ms, self.player.duration())
+
+    def seek_and_play(self, seconds: float):
+        """Seek to timestamp and commence playback."""
+        self.seek_seconds(seconds)
+        self.play()
+
     def toggle_play(self):
         if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.player.pause()

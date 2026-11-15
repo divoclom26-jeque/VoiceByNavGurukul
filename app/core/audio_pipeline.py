@@ -20,10 +20,11 @@ class AudioPipeline:
         output_path: Path,
         pause_ms: int = 350,
         fade_ms: int = 15,
+        pauses_ms: Optional[List[int]] = None,
     ) -> Path:
         """Losslessly concatenate multiple WAV files that share sample rate & channel config.
         
-        Inserts silence of pause_ms duration between chunks.
+        Inserts silence of pause_ms (or individual pauses_ms[i]) duration between chunks.
         Applies smooth micro fade-in and fade-out (fade_ms) to eliminate seam clicks.
         Operates directly using Python wave stdlib and numpy for instant execution.
         """
@@ -41,10 +42,6 @@ class AudioPipeline:
             n_channels = wf.getnchannels()
             sample_width = wf.getsampwidth()
             framerate = wf.getframerate()
-
-        # Compute silence frames for pause between blocks
-        pause_frames_count = int(framerate * (pause_ms / 1000.0))
-        silence_bytes = b"\x00" * (pause_frames_count * n_channels * sample_width)
 
         with wave.open(str(tmp_output), "wb") as out_wf:
             out_wf.setparams(params)
@@ -72,8 +69,16 @@ class AudioPipeline:
                     out_wf.writeframes(raw_frames)
 
                 # Insert pause between chunks (but not after the last chunk)
-                if pause_ms > 0 and i < len(wav_files) - 1:
-                    out_wf.writeframes(silence_bytes)
+                if i < len(wav_files) - 1:
+                    cur_pause_ms = (
+                        pauses_ms[i] if pauses_ms and i < len(pauses_ms) else pause_ms
+                    )
+                    if cur_pause_ms > 0:
+                        pause_frames_count = int(framerate * (cur_pause_ms / 1000.0))
+                        silence_bytes = b"\x00" * (
+                            pause_frames_count * n_channels * sample_width
+                        )
+                        out_wf.writeframes(silence_bytes)
 
         validate_wav_file(tmp_output)
         tmp_output.replace(output_path)

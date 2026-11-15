@@ -128,13 +128,15 @@ class FluentMainWindow(FluentWindow):
             )
         )
 
-        # Block interface playback
+        # Block interface playback & Descript-style seek/repack
         self.block_interface.play_audio_requested.connect(
             lambda audio_path, title: (
                 self.player_bar.load_audio(audio_path, title=title),
                 self.player_bar.play(),
             )
         )
+        self.block_interface.seek_master_requested.connect(self._on_seek_master_requested)
+        self.block_interface.master_repacked.connect(self._on_master_repacked)
 
         # Mixer interface playback
         self.mixer_interface.play_audio_requested.connect(
@@ -186,6 +188,24 @@ class FluentMainWindow(FluentWindow):
                 self.switchTo(self.block_interface)
         except Exception as e:
             logger.error("Error loading project %s: %s", project_dir, e)
+
+    def _on_seek_master_requested(self, start_time: float):
+        if self.block_interface.project:
+            master_wav = (
+                self.block_interface.project.exports_dir
+                / f"{self.block_interface.project.name}_master.wav"
+            )
+            if master_wav.is_file():
+                if not self.player_bar.current_file or self.player_bar.current_file != master_wav:
+                    self.player_bar.load_audio(
+                        str(master_wav), title=f"Master: {self.block_interface.project.name}"
+                    )
+                self.player_bar.seek_and_play(start_time)
+
+    def _on_master_repacked(self, master_path: str, duration: float):
+        proj_name = self.block_interface.project.name if self.block_interface.project else "Master"
+        self.player_bar.load_audio(master_path, title=f"Master: {proj_name}")
+        self.projects_interface.refresh()
 
     def _on_voice_installed(self, voice_key: str):
         self.studio_interface._populate_voices()

@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 import re
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from app.core.audio_pipeline import AudioPipeline
 from app.core.text_processor import TextProcessor
@@ -29,6 +29,9 @@ class TextBlock:
     voice_key: Optional[str] = None  # Override voice per-block (multi-speaker)
     speed: Optional[float] = None  # Override speed per-block
     speaker_label: Optional[str] = None  # e.g. "Narrator", "Speaker A"
+    pause_after_ms: Optional[int] = None  # Custom pause after this block (ms)
+    start_time: float = 0.0  # Cumulative start time in master audio (seconds)
+    end_time: float = 0.0  # Cumulative end time in master audio (seconds)
 
 
 class Project:
@@ -98,6 +101,9 @@ class Project:
                 voice_key=b.get("voice_key"),
                 speed=b.get("speed"),
                 speaker_label=b.get("speaker_label"),
+                pause_after_ms=b.get("pause_after_ms"),
+                start_time=b.get("start_time", 0.0),
+                end_time=b.get("end_time", 0.0),
             )
             for b in data.get("blocks", [])
         ]
@@ -259,6 +265,20 @@ class Project:
 
         return self.blocks
 
+    def update_timings(self, default_pause_ms: int = 350) -> None:
+        """Calculate and store exact cumulative start_time and end_time for each block."""
+        cumulative_time = 0.0
+        for b in self.blocks:
+            if b.status == "completed" and b.audio_file:
+                b.start_time = round(cumulative_time, 3)
+                b.end_time = round(cumulative_time + b.duration, 3)
+                p_ms = b.pause_after_ms if b.pause_after_ms is not None else default_pause_ms
+                cumulative_time = b.end_time + (p_ms / 1000.0)
+            else:
+                b.start_time = round(cumulative_time, 3)
+                b.end_time = round(cumulative_time, 3)
+        self.save()
+
     def build_master_audio(
         self,
         output_format: str = "wav",
@@ -270,11 +290,14 @@ class Project:
         pipeline = pipeline or AudioPipeline()
 
         completed_files = []
+        pauses_ms = []
         for b in self.blocks:
             if b.status == "completed" and b.audio_file:
                 seg_path = self.project_dir / b.audio_file
                 if seg_path.is_file():
                     completed_files.append(seg_path)
+                    p_val = b.pause_after_ms if b.pause_after_ms is not None else pause_ms
+                    pauses_ms.append(p_val)
 
         if not completed_files:
             raise RuntimeError("No completed audio segments available to build master audio.")
@@ -282,8 +305,10 @@ class Project:
         raw_master = self.exports_dir / f"{self.name}_raw.wav"
         final_master_wav = self.exports_dir / f"{self.name}_master.wav"
 
-        # 1. Concatenate all blocks with inter-sentence pauses
-        pipeline.concatenate_wavs_fast(completed_files, raw_master, pause_ms=pause_ms)
+        # 1. Concatenate all blocks with inter-sentence pauses and micro-crossfades
+        pipeline.concatenate_wavs_fast(
+            completed_files, raw_master, pause_ms=pause_ms, pauses_ms=pauses_ms
+        )
 
         # 2. Normalize loudness (EBU R128) if requested
         if normalize:
@@ -293,7 +318,10 @@ class Project:
         else:
             raw_master.replace(final_master_wav)
 
-        # 3. Export to requested format
+        # 3. Update cumulative block start and end timestamps
+        self.update_timings(default_pause_ms=pause_ms)
+
+        # 4. Export to requested format
         if output_format.lower() == "mp3":
             final_mp3 = self.exports_dir / f"{self.name}_master.mp3"
             pipeline.export_to_mp3(
@@ -305,6 +333,190 @@ class Project:
             return final_mp3
 
         return final_master_wav
+
+    def retake_block(
+        self,
+        block_id: int,
+        new_text: Optional[str] = None,
+        voice_key: Optional[str] = None,
+        speed: Optional[float] = None,
+        pause_after_ms: Optional[int] = None,
+        rebuild_master: bool = True,
+    ) -> TextBlock:
+        """Instant Re-Take: update block text/voice/speed, re-synthesize, and re-pack master audio."""
+        target_block = None
+        for b in self.blocks:
+            if b.id == block_id:
+                target_block = b
+                break
+
+        if not target_block:
+            raise KeyError(f"Block ID {block_id} not found in project.")
+
+        if new_text is not None:
+            target_block.text = new_text.strip()
+        if voice_key is not None:
+            target_block.voice_key = voice_key
+        if speed is not None:
+            target_block.speed = speed
+        if pause_after_ms is not None:
+            target_block.pause_after_ms = pause_after_ms
+
+        target_block.status = "pending"
+        self.save()
+
+        # Re-synthesize this single block
+        self.synthesize_block(block_id)
+
+        # Re-pack master if requested and previous master audio exists
+        if rebuild_master and target_block.status == "completed":
+            try:
+                self.build_master_audio(normalize=False)
+            except Exception as e:
+                logger.warning("Could not auto-rebuild master after retake: %s", e)
+
+        return target_block
+
+    def delete_block(self, block_id: int, rebuild_master: bool = True) -> bool:
+        """Cut Text = Cut Audio: delete block from script, delete its WAV, and update master."""
+        target_idx = None
+        for i, b in enumerate(self.blocks):
+            if b.id == block_id:
+                target_idx = i
+                break
+
+        if target_idx is None:
+            return False
+
+        block = self.blocks.pop(target_idx)
+
+        # Delete audio segment if present
+        if block.audio_file:
+            seg_path = self.project_dir / block.audio_file
+            if seg_path.is_file():
+                try:
+                    seg_path.unlink()
+                except Exception as e:
+                    logger.warning("Failed to remove deleted segment file %s: %s", seg_path, e)
+
+        # Re-index remaining blocks
+        for i, b in enumerate(self.blocks):
+            b.id = i + 1
+
+        self.save()
+
+        # Re-pack master if any completed blocks remain
+        if rebuild_master and any(b.status == "completed" for b in self.blocks):
+            try:
+                self.build_master_audio(normalize=False)
+            except Exception as e:
+                logger.warning("Could not auto-rebuild master after delete: %s", e)
+
+        return True
+
+    def add_block(
+        self,
+        text: str,
+        after_block_id: Optional[int] = None,
+        voice_key: Optional[str] = None,
+        speed: Optional[float] = None,
+        pause_after_ms: Optional[int] = None,
+        synthesize_now: bool = True,
+    ) -> TextBlock:
+        """Insert a new text block at the specified position and synthesize it."""
+        text = text.strip()
+        if not text:
+            raise ValueError("Block text cannot be empty.")
+
+        new_block = TextBlock(
+            id=len(self.blocks) + 1,
+            text=text,
+            voice_key=voice_key,
+            speed=speed,
+            pause_after_ms=pause_after_ms,
+            status="pending",
+        )
+
+        if after_block_id is not None:
+            insert_idx = len(self.blocks)
+            for i, b in enumerate(self.blocks):
+                if b.id == after_block_id:
+                    insert_idx = i + 1
+                    break
+            self.blocks.insert(insert_idx, new_block)
+        else:
+            self.blocks.append(new_block)
+
+        # Re-index blocks
+        for i, b in enumerate(self.blocks):
+            b.id = i + 1
+
+        self.save()
+
+        if synthesize_now:
+            self.synthesize_block(new_block.id)
+            try:
+                self.build_master_audio(normalize=False)
+            except Exception as e:
+                logger.warning("Could not rebuild master after adding block: %s", e)
+
+        return new_block
+
+    def split_block(
+        self,
+        block_id: int,
+        split_char_index: int,
+        synthesize_now: bool = True,
+    ) -> Tuple[TextBlock, TextBlock]:
+        """Split a block into two smaller blocks at split_char_index."""
+        target_idx = None
+        for i, b in enumerate(self.blocks):
+            if b.id == block_id:
+                target_idx = i
+                break
+
+        if target_idx is None:
+            raise KeyError(f"Block ID {block_id} not found.")
+
+        target = self.blocks[target_idx]
+        full_text = target.text
+        if split_char_index <= 0 or split_char_index >= len(full_text):
+            raise ValueError(f"Invalid split index {split_char_index} for text length {len(full_text)}")
+
+        text_a = full_text[:split_char_index].strip()
+        text_b = full_text[split_char_index:].strip()
+
+        if not text_a or not text_b:
+            raise ValueError("Split would produce an empty block.")
+
+        target.text = text_a
+        target.status = "pending"
+
+        new_block = TextBlock(
+            id=block_id + 1,
+            text=text_b,
+            voice_key=target.voice_key,
+            speed=target.speed,
+            pause_after_ms=target.pause_after_ms,
+            status="pending",
+        )
+        self.blocks.insert(target_idx + 1, new_block)
+
+        # Re-index blocks
+        for i, b in enumerate(self.blocks):
+            b.id = i + 1
+
+        self.save()
+
+        if synthesize_now:
+            self.synthesize_block(target.id)
+            self.synthesize_block(new_block.id)
+            try:
+                self.build_master_audio(normalize=False)
+            except Exception as e:
+                logger.warning("Could not rebuild master after split: %s", e)
+
+        return target, new_block
 
 
 class ProjectManager:
