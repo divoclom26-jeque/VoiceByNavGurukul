@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from app.core.text_processor import TextProcessor
 from app.tts import PiperTTSEngine, list_local_voices
+from app.ui.components.block_table import BlockTableWidget
 from app.ui.components.editor_widget import EditorWidget
 from app.ui.components.player_widget import AudioPlayerWidget
 from app.ui.components.project_history import ProjectHistoryWidget
@@ -72,12 +73,14 @@ class MainWindow(QMainWindow):
         # 2. Right Stacked Pages
         self.stack = QStackedWidget()
         self.page_studio = self._build_studio_page()
+        self.page_blocks = BlockTableWidget()
         self.page_gallery = VoiceGalleryWidget()
         self.page_projects = ProjectHistoryWidget()
 
         self.stack.addWidget(self.page_studio)    # index 0
-        self.stack.addWidget(self.page_gallery)   # index 1
-        self.stack.addWidget(self.page_projects)  # index 2
+        self.stack.addWidget(self.page_blocks)    # index 1
+        self.stack.addWidget(self.page_gallery)   # index 2
+        self.stack.addWidget(self.page_projects)  # index 3
 
         main_layout.addWidget(self.stack, stretch=1)
 
@@ -108,17 +111,23 @@ class MainWindow(QMainWindow):
         self.btn_nav_studio.setProperty("class", "nav-btn")
         self.nav_group.addButton(self.btn_nav_studio, 0)
 
+        self.btn_nav_blocks = QPushButton("🔍 Block Review")
+        self.btn_nav_blocks.setCheckable(True)
+        self.btn_nav_blocks.setProperty("class", "nav-btn")
+        self.nav_group.addButton(self.btn_nav_blocks, 1)
+
         self.btn_nav_gallery = QPushButton("🌐 Voice Gallery")
         self.btn_nav_gallery.setCheckable(True)
         self.btn_nav_gallery.setProperty("class", "nav-btn")
-        self.nav_group.addButton(self.btn_nav_gallery, 1)
+        self.nav_group.addButton(self.btn_nav_gallery, 2)
 
         self.btn_nav_projects = QPushButton("📚 Projects & History")
         self.btn_nav_projects.setCheckable(True)
         self.btn_nav_projects.setProperty("class", "nav-btn")
-        self.nav_group.addButton(self.btn_nav_projects, 2)
+        self.nav_group.addButton(self.btn_nav_projects, 3)
 
         layout.addWidget(self.btn_nav_studio)
+        layout.addWidget(self.btn_nav_blocks)
         layout.addWidget(self.btn_nav_gallery)
         layout.addWidget(self.btn_nav_projects)
 
@@ -297,10 +306,16 @@ class MainWindow(QMainWindow):
         # Voice gallery signal
         self.page_gallery.voice_installed.connect(lambda _: self._populate_voices())
 
+        # Block review signals
+        self.page_blocks.play_block_requested.connect(
+            lambda path, title: (self.player.load_audio(path, title), self.player.play())
+        )
+
         # Projects history signals
         self.page_projects.play_audio_requested.connect(
-            lambda path, title: self.player.load_audio(path, title)
+            lambda path, title: (self.player.load_audio(path, title), self.player.play())
         )
+        self.page_projects.load_project_requested.connect(self._on_load_project_from_history)
 
     def _preview_chunks(self):
         text = self.editor.get_text()
@@ -404,6 +419,18 @@ class MainWindow(QMainWindow):
         self.player.load_audio(master_path, f"{project_name} ({duration:.1f}s)")
         self.player.play()
 
+        # Load project into Block Review table
+        try:
+            from app.core.project_manager import Project, ProjectManager
+            from app.utils.paths import PROJECTS_DIR
+            slug = ProjectManager.slugify(project_name)
+            p_dir = PROJECTS_DIR / slug
+            if p_dir.is_dir():
+                proj = Project.load(p_dir)
+                self.page_blocks.load_project(proj)
+        except Exception as e:
+            logger.warning(f"Could not load project into blocks page: {e}")
+
         # Refresh project history tab
         self.page_projects.refresh()
 
@@ -412,8 +439,24 @@ class MainWindow(QMainWindow):
             "Generation Complete! 🎉",
             f"Successfully produced master audio for '{project_name}'!\n\n"
             f"Duration: {duration:.1f} seconds\n"
-            f"Saved to: {master_path}",
+            f"Saved to: {master_path}\n\n"
+            "Tip: You can now review each block individually in the 'Block Review' tab!",
         )
+
+    def _on_load_project_from_history(self, project_dir_str: str):
+        try:
+            from app.core.project_manager import Project
+            p_dir = Path(project_dir_str)
+            proj = Project.load(p_dir)
+            self.page_blocks.load_project(proj)
+            self.editor.set_project_name(proj.name)
+            # Reconstruct text in editor
+            all_text = "\n\n".join(b.text for b in proj.blocks)
+            self.editor.set_text(all_text)
+            self.btn_nav_blocks.setChecked(True)
+            self.stack.setCurrentIndex(1)
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Could not load project: {e}")
 
     def _on_worker_error(self, err_msg: str):
         self.btn_generate.setEnabled(True)

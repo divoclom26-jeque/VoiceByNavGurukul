@@ -99,6 +99,11 @@ class ProjectHistoryWidget(QFrame):
                 btn_play.clicked.connect(lambda _, a=master_audio, n=p["name"]: self.play_audio_requested.emit(str(a), n))
                 action_layout.addWidget(btn_play)
 
+            btn_review = QPushButton("🔍 Review Blocks")
+            btn_review.setProperty("class", "btn-secondary")
+            btn_review.clicked.connect(lambda _, d=p_dir: self.load_project_requested.emit(str(d)))
+            action_layout.addWidget(btn_review)
+
             btn_open = QPushButton("📂 Folder")
             btn_open.setProperty("class", "btn-secondary")
             btn_open.clicked.connect(lambda _, d=p_dir: self._open_folder(d))

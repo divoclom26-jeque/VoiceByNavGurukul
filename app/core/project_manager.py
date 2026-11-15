@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 from app.core.audio_pipeline import AudioPipeline
 from app.core.text_processor import TextProcessor
 from app.tts.base import BaseTTSEngine
+from app.tts.kokoro_engine import KokoroTTSEngine
 from app.tts.piper_engine import PiperTTSEngine
 from app.tts.voice_manager import list_local_voices
 from app.utils.atomic_audio import validate_wav_file
@@ -25,6 +26,9 @@ class TextBlock:
     status: str = "pending"  # "pending", "completed", "failed"
     duration: float = 0.0
     error_message: Optional[str] = None
+    voice_key: Optional[str] = None  # Override voice per-block (multi-speaker)
+    speed: Optional[float] = None  # Override speed per-block
+    speaker_label: Optional[str] = None  # e.g. "Narrator", "Speaker A"
 
 
 class Project:
@@ -91,6 +95,9 @@ class Project:
                 status=b.get("status", "pending"),
                 duration=b.get("duration", 0.0),
                 error_message=b.get("error_message"),
+                voice_key=b.get("voice_key"),
+                speed=b.get("speed"),
+                speaker_label=b.get("speaker_label"),
             )
             for b in data.get("blocks", [])
         ]
@@ -105,14 +112,71 @@ class Project:
         )
         return proj
 
-    def get_voice_config(self) -> Dict[str, Any]:
-        """Find local voice configuration for this project's voice."""
+    def get_voice_config_for_block(self, block: TextBlock) -> Dict[str, Any]:
+        """Resolve voice configuration for a specific block (supporting per-block multi-voice)."""
+        target_voice_key = block.voice_key or self.voice_key
+        target_speed = block.speed or self.speed
+
+        # Check if Kokoro voice
+        if str(target_voice_key).startswith("kokoro:") or str(target_voice_key).startswith("af_") or str(target_voice_key).startswith("am_"):
+            clean_voice = target_voice_key.replace("kokoro:", "")
+            return {
+                "engine": "kokoro",
+                "voice": clean_voice,
+                "speed": target_speed,
+            }
+
+        # Otherwise resolve Piper voice
         voices = {v["key"]: v for v in list_local_voices()}
-        if self.voice_key not in voices:
-            raise ValueError(f"Voice '{self.voice_key}' is not installed locally.")
-        cfg = dict(voices[self.voice_key])
-        cfg["speed"] = self.speed
+        if target_voice_key not in voices:
+            # Fallback to project default voice
+            if self.voice_key in voices:
+                target_voice_key = self.voice_key
+            elif voices:
+                target_voice_key = list(voices.keys())[0]
+            else:
+                raise ValueError(f"No local voice available for key '{target_voice_key}'")
+
+        cfg = dict(voices[target_voice_key])
+        cfg["engine"] = "piper"
+        cfg["speed"] = target_speed
         return cfg
+
+    def get_voice_config(self) -> Dict[str, Any]:
+        """Find default voice configuration for this project."""
+        dummy_block = TextBlock(id=0, text="", voice_key=self.voice_key, speed=self.speed)
+        return self.get_voice_config_for_block(dummy_block)
+
+    def update_block_text(self, block_id: int, new_text: str) -> TextBlock:
+        """Update text of a block and mark it pending."""
+        for b in self.blocks:
+            if b.id == block_id:
+                b.text = new_text.strip()
+                b.status = "pending"
+                self.save()
+                return b
+        raise KeyError(f"Block ID {block_id} not found.")
+
+    def assign_block_voice(
+        self,
+        block_id: int,
+        voice_key: Optional[str] = None,
+        speaker_label: Optional[str] = None,
+        speed: Optional[float] = None,
+    ) -> TextBlock:
+        """Assign a specific voice or speaker to a single block."""
+        for b in self.blocks:
+            if b.id == block_id:
+                if voice_key is not None:
+                    b.voice_key = voice_key
+                if speaker_label is not None:
+                    b.speaker_label = speaker_label
+                if speed is not None:
+                    b.speed = speed
+                b.status = "pending"
+                self.save()
+                return b
+        raise KeyError(f"Block ID {block_id} not found.")
 
     def synthesize_block(
         self,
@@ -120,9 +184,6 @@ class Project:
         engine: Optional[BaseTTSEngine] = None,
     ) -> TextBlock:
         """Synthesize a single block by ID (ideal for block-by-block edits)."""
-        engine = engine or PiperTTSEngine()
-        voice_cfg = self.get_voice_config()
-
         target_block = None
         for b in self.blocks:
             if b.id == block_id:
@@ -132,9 +193,17 @@ class Project:
         if not target_block:
             raise KeyError(f"Block ID {block_id} not found in project.")
 
+        voice_cfg = self.get_voice_config_for_block(target_block)
+        active_engine = engine
+        if not active_engine:
+            if voice_cfg.get("engine") == "kokoro":
+                active_engine = KokoroTTSEngine()
+            else:
+                active_engine = PiperTTSEngine()
+
         out_wav = self.segments_dir / f"block_{target_block.id:04d}.wav"
         try:
-            engine.synthesize_to_wav(target_block.text, out_wav, voice_cfg)
+            active_engine.synthesize_to_wav(target_block.text, out_wav, voice_cfg)
             info = validate_wav_file(out_wav)
             target_block.audio_file = str(out_wav.relative_to(self.project_dir))
             target_block.duration = info["duration"]
@@ -155,8 +224,8 @@ class Project:
         force_rebuild: bool = False,
     ) -> List[TextBlock]:
         """Synthesize all pending blocks in the project."""
-        engine = engine or PiperTTSEngine()
-        voice_cfg = self.get_voice_config()
+        piper_engine = PiperTTSEngine()
+        kokoro_engine = KokoroTTSEngine()
         total = len(self.blocks)
 
         for i, block in enumerate(self.blocks):
@@ -164,14 +233,17 @@ class Project:
 
             if not force_rebuild and block.status == "completed" and out_wav.is_file():
                 if progress_callback:
-                    progress_callback(i + 1, total, f"Block {block.id} already up to date")
+                    progress_callback(i + 1, total, f"Block {block.id} up to date")
                 continue
 
             if progress_callback:
                 progress_callback(i + 1, total, f"Rendering Block {block.id} of {total}...")
 
+            voice_cfg = self.get_voice_config_for_block(block)
+            active_engine = engine or (kokoro_engine if voice_cfg.get("engine") == "kokoro" else piper_engine)
+
             try:
-                engine.synthesize_to_wav(block.text, out_wav, voice_cfg)
+                active_engine.synthesize_to_wav(block.text, out_wav, voice_cfg)
                 info = validate_wav_file(out_wav)
                 block.audio_file = str(out_wav.relative_to(self.project_dir))
                 block.duration = info["duration"]
@@ -256,13 +328,11 @@ class ProjectManager:
         slug = cls.slugify(name)
         project_dir = PROJECTS_DIR / slug
         if project_dir.exists():
-            # append timestamp if directory already exists
             slug = f"{slug}_{int(datetime.datetime.now().timestamp())}"
             project_dir = PROJECTS_DIR / slug
 
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract blocks using TextProcessor
         raw_blocks = TextProcessor.split_into_blocks(text, max_chars=max_chars)
         text_blocks = [
             TextBlock(id=i + 1, text=block_text)

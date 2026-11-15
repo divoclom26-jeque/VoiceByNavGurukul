@@ -5,6 +5,7 @@ import pytest
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PySide6.QtWidgets import QApplication
+from app.ui.components.block_table import BlockTableWidget
 from app.ui.components.editor_widget import EditorWidget
 from app.ui.components.player_widget import AudioPlayerWidget
 from app.ui.components.project_history import ProjectHistoryWidget
@@ -26,11 +27,12 @@ def test_main_window_instantiation(qapp):
     window = MainWindow()
     assert window is not None
     assert window.windowTitle() != ""
-    assert window.stack.count() == 3
+    assert window.stack.count() == 4
 
     # Check child widgets exist
     assert isinstance(window.editor, EditorWidget)
     assert isinstance(window.player, AudioPlayerWidget)
+    assert isinstance(window.page_blocks, BlockTableWidget)
     assert isinstance(window.page_gallery, VoiceGalleryWidget)
     assert isinstance(window.page_projects, ProjectHistoryWidget)
 
