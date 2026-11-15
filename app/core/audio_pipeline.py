@@ -178,6 +178,108 @@ class AudioPipeline:
             if pause_wav and pause_wav.exists():
                 pause_wav.unlink()
 
+    STUDIO_PRESETS: Dict[str, Dict[str, Any]] = {
+        "podcast_warmth": {
+            "name": "🎙️ Podcast Warmth",
+            "desc": "Rich low-end proximity (+3dB @ 120Hz) with optical compression",
+            "filter": "highpass=f=75,equalizer=f=120:width_type=o:width=1.5:g=3.0,equalizer=f=3500:width_type=o:width=1.2:g=1.5,acompressor=threshold=-18dB:ratio=3:attack=20:release=250:makeup=2",
+            "target_i": -16.0,
+            "true_peak": -1.5,
+        },
+        "broadcast_clarity": {
+            "name": "📻 Broadcast Clarity",
+            "desc": "Crisp speech intelligibility, de-essing, and punchy broadcast compression",
+            "filter": "highpass=f=85,equalizer=f=300:width_type=o:width=1.5:g=-1.5,equalizer=f=3200:width_type=o:width=1.0:g=3.5,equalizer=f=7500:width_type=o:width=1.5:g=-2.5,acompressor=threshold=-14dB:ratio=4:attack=10:release=150:makeup=2.5",
+            "target_i": -14.0,
+            "true_peak": -1.0,
+        },
+        "audiobook_acx": {
+            "name": "📖 Audiobook Standard (ACX)",
+            "desc": "Audible ACX compliant (-19.5 LUFS, peak <= -3.0dB, soft leveling)",
+            "filter": "highpass=f=80,lowpass=f=15000,acompressor=threshold=-20dB:ratio=2.5:attack=30:release=300:makeup=1.5",
+            "target_i": -19.5,
+            "true_peak": -3.0,
+        },
+        "crisp_clean": {
+            "name": "⚡ Crisp & Clean",
+            "desc": "Transparent studio speech with high-pass rumble filter",
+            "filter": "highpass=f=80,equalizer=f=2500:width_type=o:width=1.0:g=1.5",
+            "target_i": -16.0,
+            "true_peak": -1.5,
+        },
+        "bypass": {
+            "name": "🚫 Bypass FX (Raw Voice)",
+            "desc": "Unprocessed direct neural TTS voice",
+            "filter": None,
+            "target_i": -16.0,
+            "true_peak": -1.5,
+        },
+    }
+
+    def apply_studio_fx_preset(
+        self,
+        input_wav: Path,
+        output_wav: Path,
+        preset_key: str = "crisp_clean",
+        add_room_tone: bool = False,
+        custom_target_i: Optional[float] = None,
+    ) -> Path:
+        """Apply broadcast-grade studio mastering EQ, compression, de-essing, room tone, and loudnorm."""
+        input_wav = Path(input_wav).resolve()
+        output_wav = Path(output_wav).resolve()
+        output_wav.parent.mkdir(parents=True, exist_ok=True)
+        tmp_wav = output_wav.with_suffix(".tmp.wav")
+
+        preset = self.STUDIO_PRESETS.get(preset_key, self.STUDIO_PRESETS["crisp_clean"])
+        dsp_filter = preset.get("filter")
+        target_i = custom_target_i if custom_target_i is not None else preset.get("target_i", -16.0)
+        true_peak = preset.get("true_peak", -1.5)
+
+        loudnorm_filter = f"loudnorm=I={target_i}:TP={true_peak}:LRA=11"
+
+        if add_room_tone:
+            # Generate faint ambient room tone bed (-54dB) and mix with speech before EQ/compression
+            base_chain = f"{dsp_filter}," if dsp_filter else ""
+            filtergraph = (
+                f"[1:a]volume=0.0006[room];"
+                f"[0:a][room]amix=inputs=2:duration=first:dropout_transition=0[mix];"
+                f"[mix]{base_chain}{loudnorm_filter}[out]"
+            )
+            cmd = [
+                str(self.ffmpeg_bin),
+                "-y",
+                "-i", str(input_wav),
+                "-f", "lavfi",
+                "-i", "anoisesrc=c=pink:r=22050:a=0.0006",
+                "-filter_complex", filtergraph,
+                "-map", "[out]",
+                "-c:a", "pcm_s16le",
+                str(tmp_wav),
+            ]
+        else:
+            filter_parts = []
+            if dsp_filter:
+                filter_parts.append(dsp_filter)
+            filter_parts.append(loudnorm_filter)
+            full_af = ",".join(filter_parts)
+
+            cmd = [
+                str(self.ffmpeg_bin),
+                "-y",
+                "-i", str(input_wav),
+                "-af", full_af,
+                "-c:a", "pcm_s16le",
+                str(tmp_wav),
+            ]
+
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg studio mastering preset failed: {res.stderr}")
+
+        validate_wav_file(tmp_wav)
+        tmp_wav.replace(output_wav)
+        return output_wav
+
     def normalize_loudness(
         self,
         input_wav: Path,

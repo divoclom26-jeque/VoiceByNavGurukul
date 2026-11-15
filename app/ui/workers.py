@@ -32,6 +32,8 @@ class SynthesisWorker(QThread):
         pause_ms: int = 350,
         output_format: str = "wav",
         normalize: bool = True,
+        fx_preset: Optional[str] = "crisp_clean",
+        add_room_tone: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -42,6 +44,8 @@ class SynthesisWorker(QThread):
         self.pause_ms = pause_ms
         self.output_format = output_format
         self.normalize = normalize
+        self.fx_preset = fx_preset
+        self.add_room_tone = add_room_tone
         self._is_cancelled = False
 
     def cancel(self):
@@ -108,6 +112,8 @@ class SynthesisWorker(QThread):
                 output_format=self.output_format,
                 pause_ms=self.pause_ms,
                 normalize=self.normalize,
+                fx_preset=self.fx_preset,
+                add_room_tone=self.add_room_tone,
             )
 
             # Get final duration

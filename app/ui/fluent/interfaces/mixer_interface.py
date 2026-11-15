@@ -21,6 +21,7 @@ from qfluentwidgets import (
     PushButton,
     Slider,
     SubtitleLabel,
+    SwitchButton,
 )
 
 from app.core.audio_pipeline import AudioPipeline
@@ -126,6 +127,49 @@ class MixerInterface(QWidget):
         meta_layout.addWidget(self.combo_format)
 
         grid.addWidget(meta_card, 0, 1)
+
+        # 3. Bottom Row: Studio Mastering FX Card
+        fx_card = CardWidget(self)
+        fx_layout = QVBoxLayout(fx_card)
+        fx_layout.setContentsMargins(16, 14, 16, 14)
+        fx_layout.setSpacing(10)
+
+        fx_head = SubtitleLabel("🎚️ Studio Mastering FX Presets", self)
+        fx_layout.addWidget(fx_head)
+
+        fx_row = QHBoxLayout()
+        fx_row.setSpacing(12)
+
+        preset_col = QVBoxLayout()
+        preset_col.addWidget(CaptionLabel("Mastering Preset:", self))
+        self.combo_fx_preset = ComboBox(self)
+        self.combo_fx_preset.addItem("🎙️ Podcast Warmth", userData="podcast_warmth")
+        self.combo_fx_preset.addItem("📻 Broadcast Clarity", userData="broadcast_clarity")
+        self.combo_fx_preset.addItem("📖 Audiobook Standard (ACX)", userData="audiobook_acx")
+        self.combo_fx_preset.addItem("⚡ Crisp & Clean", userData="crisp_clean")
+        self.combo_fx_preset.addItem("🚫 Bypass FX (Raw Voice)", userData="bypass")
+        preset_col.addWidget(self.combo_fx_preset)
+        fx_row.addLayout(preset_col, stretch=2)
+
+        room_col = QVBoxLayout()
+        room_col.addWidget(CaptionLabel("Natural Room Tone:", self))
+        self.switch_mixer_room_tone = SwitchButton(self)
+        self.switch_mixer_room_tone.setChecked(False)
+        self.switch_mixer_room_tone.setToolTip("Subtle acoustic room presence during silence gaps")
+        room_col.addWidget(self.switch_mixer_room_tone)
+        fx_row.addLayout(room_col, stretch=1)
+
+        fx_layout.addLayout(fx_row)
+
+        self.lbl_fx_desc = CaptionLabel(
+            "Rich low-end proximity (+3dB @ 120Hz) with smooth optical compression (-16 LUFS)",
+            self,
+        )
+        self.lbl_fx_desc.setStyleSheet("font-style: italic; color: #555;")
+        self.combo_fx_preset.currentIndexChanged.connect(self._update_fx_desc)
+        fx_layout.addWidget(self.lbl_fx_desc)
+
+        grid.addWidget(fx_card, 1, 0, 1, 2)
         main_layout.addLayout(grid, stretch=1)
 
         # Production Action Button
@@ -133,6 +177,13 @@ class MixerInterface(QWidget):
         self.btn_produce.setFixedHeight(42)
         self.btn_produce.clicked.connect(self._produce_master)
         main_layout.addWidget(self.btn_produce)
+
+    def _update_fx_desc(self):
+        preset_key = self.combo_fx_preset.currentData() or "podcast_warmth"
+        preset = self.pipeline.STUDIO_PRESETS.get(preset_key, {})
+        desc = preset.get("desc", "")
+        target_i = preset.get("target_i", -16.0)
+        self.lbl_fx_desc.setText(f"{desc} (Target: {target_i} LUFS)")
 
     def load_project(self, project: Project):
         self.project = project
@@ -154,8 +205,17 @@ class MixerInterface(QWidget):
             return
 
         try:
-            # 1. Base speech master
-            speech_master = self.project.build_master_audio(output_format="wav", pause_ms=350, normalize=True)
+            # 1. Base speech master with selected Studio FX preset
+            fx_key = self.combo_fx_preset.currentData() or "podcast_warmth"
+            room_tone = self.switch_mixer_room_tone.isChecked()
+
+            speech_master = self.project.build_master_audio(
+                output_format="wav",
+                pause_ms=350,
+                normalize=True,
+                fx_preset=fx_key,
+                add_room_tone=room_tone,
+            )
             active_track = speech_master
 
             # 2. Ducking if music provided

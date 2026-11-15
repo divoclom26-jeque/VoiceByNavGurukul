@@ -284,9 +284,11 @@ class Project:
         output_format: str = "wav",
         pause_ms: int = 350,
         normalize: bool = True,
+        fx_preset: Optional[str] = "crisp_clean",
+        add_room_tone: bool = False,
         pipeline: Optional[AudioPipeline] = None,
     ) -> Path:
-        """Concatenate all completed segments into a unified master audio file."""
+        """Concatenate all completed segments into a unified master audio file with Studio FX mastering."""
         pipeline = pipeline or AudioPipeline()
 
         completed_files = []
@@ -310,9 +312,18 @@ class Project:
             completed_files, raw_master, pause_ms=pause_ms, pauses_ms=pauses_ms
         )
 
-        # 2. Normalize loudness (EBU R128) if requested
+        # 2. Apply Studio Mastering FX Preset and EBU R128 Loudnorm if requested
         if normalize:
-            pipeline.normalize_loudness(raw_master, final_master_wav)
+            if fx_preset and fx_preset in pipeline.STUDIO_PRESETS:
+                pipeline.apply_studio_fx_preset(
+                    raw_master,
+                    final_master_wav,
+                    preset_key=fx_preset,
+                    add_room_tone=add_room_tone,
+                )
+            else:
+                pipeline.normalize_loudness(raw_master, final_master_wav)
+
             if raw_master.exists():
                 raw_master.unlink()
         else:

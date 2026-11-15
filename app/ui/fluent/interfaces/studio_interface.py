@@ -144,6 +144,26 @@ class StudioInterface(QWidget):
         self.combo_format.addItems(["WAV (Lossless)", "MP3 (192 kbps)"])
         settings_layout.addWidget(self.combo_format)
 
+        # Mastering FX Preset
+        settings_layout.addWidget(CaptionLabel("Mastering FX Preset:", self))
+        self.combo_preset = ComboBox(self)
+        self.combo_preset.addItem("⚡ Crisp & Clean (Default)", userData="crisp_clean")
+        self.combo_preset.addItem("🎙️ Podcast Warmth", userData="podcast_warmth")
+        self.combo_preset.addItem("📻 Broadcast Clarity", userData="broadcast_clarity")
+        self.combo_preset.addItem("📖 Audiobook Standard (ACX)", userData="audiobook_acx")
+        self.combo_preset.addItem("🚫 Bypass FX (Raw Voice)", userData="bypass")
+        settings_layout.addWidget(self.combo_preset)
+
+        # Room Tone Switch
+        room_row = QHBoxLayout()
+        room_row.addWidget(CaptionLabel("Natural Room Tone:", self))
+        self.switch_room_tone = SwitchButton(self)
+        self.switch_room_tone.setChecked(False)
+        self.switch_room_tone.setToolTip("Adds subtle acoustic room presence during silence to eliminate artificial digital void.")
+        room_row.addStretch()
+        room_row.addWidget(self.switch_room_tone)
+        settings_layout.addLayout(room_row)
+
         # Loudnorm Switch
         loudnorm_row = QHBoxLayout()
         loudnorm_row.addWidget(CaptionLabel("EBU R128 Loudnorm:", self))
@@ -331,6 +351,8 @@ class StudioInterface(QWidget):
         pause_ms = self.slider_pause.value()
         fmt = "mp3" if "MP3" in self.combo_format.currentText() else "wav"
         norm = self.switch_loudnorm.isChecked()
+        preset_key = self.combo_preset.currentData() or "crisp_clean"
+        room_tone = self.switch_room_tone.isChecked()
 
         self.btn_generate.setEnabled(False)
         self.progress_bar.setVisible(True)
@@ -346,6 +368,8 @@ class StudioInterface(QWidget):
             pause_ms=pause_ms,
             output_format=fmt,
             normalize=norm,
+            fx_preset=preset_key,
+            add_room_tone=room_tone,
             parent=self,
         )
         self.current_worker.progress.connect(self._on_progress)
