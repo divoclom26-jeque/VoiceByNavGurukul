@@ -29,6 +29,7 @@ class CloneProfile:
     preview_audio: Optional[str] = None
     pitch_shift: float = 0.0
     speed_factor: float = 1.0
+    spectral_envelope_file: Optional[str] = "spectral_envelope.npy"
     clones_dir_path: Optional[str] = None
 
     @property
@@ -46,6 +47,11 @@ class CloneProfile:
         return self.clone_dir / self.embedding_file
 
     @property
+    def full_spectral_envelope_path(self) -> Path:
+        filename = self.spectral_envelope_file or "spectral_envelope.npy"
+        return self.clone_dir / filename
+
+    @property
     def full_preview_path(self) -> Optional[Path]:
         return self.clone_dir / self.preview_audio if self.preview_audio else None
 
@@ -56,6 +62,8 @@ class CloneProfile:
     def from_dict(cls, data: Dict[str, Any], clones_dir_path: Optional[str] = None) -> "CloneProfile":
         if "clones_dir_path" not in data and clones_dir_path:
             data["clones_dir_path"] = clones_dir_path
+        if "spectral_envelope_file" not in data:
+            data["spectral_envelope_file"] = "spectral_envelope.npy"
         return cls(**data)
 
 
@@ -124,13 +132,36 @@ class CloneManager:
             min_duration_sec=2.0,
         )
 
+        import soundfile as sf
+        clean_data, clean_sr = sf.read(str(target_ref_wav), dtype="float32")
+
         # 2. Extract 256-D speaker embedding
         emb = self.encoder.extract_embedding_from_file(target_ref_wav)
         emb_file_name = "speaker_embedding.npy"
         target_emb_file = target_dir / emb_file_name
         np.save(str(target_emb_file), emb)
 
-        # 3. Create profile
+        # 3. Extract and persist vocal tract spectral envelope
+        spec_env = AudioDSP.extract_spectral_envelope(clean_data, sr=clean_sr)
+        spec_file_name = "spectral_envelope.npy"
+        target_spec_file = target_dir / spec_file_name
+        np.save(str(target_spec_file), spec_env)
+
+        # 4. Measure natural pitch and compute auto pitch-shift if pitch_shift was not explicitly provided
+        if abs(pitch_shift) < 0.05:
+            user_f0 = AudioDSP.estimate_median_f0(clean_data, sr=clean_sr)
+            base_f0_map = {
+                "hi_IN-pratham-medium": 107.0,
+                "hi_IN-priyamvada-medium": 220.0,
+                "en_US-lessac-medium": 140.0,
+                "en_US-ryan-medium": 115.0,
+                "en_US-amy-medium": 215.0,
+            }
+            nominal_base_f0 = base_f0_map.get(base_voice_key, 120.0)
+            pitch_shift = float(np.clip(round(12.0 * np.log2(user_f0 / nominal_base_f0), 1), -12.0, 12.0))
+            logger.info("Auto-calculated pitch shift: %s semitones (User F0: %.1fHz, Base: %.1fHz)", pitch_shift, user_f0, nominal_base_f0)
+
+        # 5. Create profile
         profile = CloneProfile(
             id=clone_id,
             name=name_clean,
@@ -141,6 +172,7 @@ class CloneManager:
             embedding_file=emb_file_name,
             preview_audio=None,
             pitch_shift=pitch_shift,
+            spectral_envelope_file=spec_file_name,
             clones_dir_path=str(self.clones_dir),
         )
 
@@ -164,5 +196,62 @@ class CloneManager:
             try:
                 return np.load(str(clone.full_embedding_path))
             except Exception as e:
-                logger.error("Failed loading embedding for %s: %e", clone_id, e)
+                logger.error("Failed loading embedding for %s: %s", clone_id, e)
         return None
+
+    def load_spectral_envelope(self, clone_id: str) -> Optional[np.ndarray]:
+        """Load the vocal tract spectral envelope for a clone, generating dynamically if missing."""
+        import soundfile as sf
+        clone = self.get_clone(clone_id)
+        if not clone:
+            return None
+
+        if clone.full_spectral_envelope_path.is_file():
+            try:
+                return np.load(str(clone.full_spectral_envelope_path))
+            except Exception as e:
+                logger.error("Failed loading spectral envelope for %s: %s", clone_id, e)
+
+        # Dynamic fallback from reference audio
+        if clone.full_reference_path.is_file():
+            try:
+                data, sr = sf.read(str(clone.full_reference_path), dtype="float32")
+                env = AudioDSP.extract_spectral_envelope(data, sr=sr)
+                np.save(str(clone.full_spectral_envelope_path), env)
+                return env
+            except Exception as e:
+                logger.error("Failed generating spectral envelope from reference: %s", e)
+        return None
+
+    def get_effective_pitch_shift(self, clone_id: str) -> float:
+        """Get the pitch shift for a clone, auto-computing and persisting if it was 0.0."""
+        import soundfile as sf
+        clone = self.get_clone(clone_id)
+        if not clone:
+            return 0.0
+
+        if abs(clone.pitch_shift) > 0.1:
+            return clone.pitch_shift
+
+        # Check if reference audio exists to auto-compute
+        if clone.full_reference_path.is_file():
+            try:
+                data, sr = sf.read(str(clone.full_reference_path), dtype="float32")
+                user_f0 = AudioDSP.estimate_median_f0(data, sr=sr)
+                base_f0_map = {
+                    "hi_IN-pratham-medium": 107.0,
+                    "hi_IN-priyamvada-medium": 220.0,
+                    "en_US-lessac-medium": 140.0,
+                    "en_US-ryan-medium": 115.0,
+                    "en_US-amy-medium": 215.0,
+                }
+                nominal_base_f0 = base_f0_map.get(clone.base_voice_key, 120.0)
+                shift = float(np.clip(round(12.0 * np.log2(user_f0 / nominal_base_f0), 1), -12.0, 12.0))
+                clone.pitch_shift = shift
+                # Update profile.json
+                p_file = clone.clone_dir / "profile.json"
+                p_file.write_text(json.dumps(clone.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+                return shift
+            except Exception as e:
+                logger.warning("Could not auto-calculate pitch shift: %s", e)
+        return 0.0

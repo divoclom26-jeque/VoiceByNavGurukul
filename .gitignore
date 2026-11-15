@@ -26,6 +26,8 @@ projects/*
 
 # Models directory cache
 models/voices/.catalog_cache.json
+models/clones/*
+!models/clones/.gitkeep
 
 # Node & Frontend
 frontend/node_modules/

@@ -89,10 +89,13 @@ class VoiceCloningEngine:
             self.piper_engine.synthesize_to_wav(text, tmp_base_wav, base_voice_cfg)
             validate_wav_file(tmp_base_wav)
 
-            # 2. Load target speaker embedding
+            # 2. Load target speaker embedding and spectral envelope
             target_emb = self.clone_manager.load_embedding(clone_id)
-            if target_emb is None:
-                # Fallback to direct base copy if embedding is missing
+            target_env = self.clone_manager.load_spectral_envelope(clone_id)
+            effective_pitch_shift = self.clone_manager.get_effective_pitch_shift(clone_id)
+
+            if target_emb is None and target_env is None:
+                # Fallback to direct base copy if models are missing
                 tmp_base_wav.replace(output_path)
                 return output_path
 
@@ -101,7 +104,8 @@ class VoiceCloningEngine:
                 source_wav_path=tmp_base_wav,
                 target_embedding=target_emb,
                 output_wav_path=output_path,
-                pitch_shift_semitones=clone.pitch_shift,
+                pitch_shift_semitones=effective_pitch_shift,
+                target_envelope=target_env,
             )
 
             validate_wav_file(output_path)
@@ -114,9 +118,10 @@ class VoiceCloningEngine:
     def morph_timbre(
         self,
         source_wav_path: Path,
-        target_embedding: np.ndarray,
+        target_embedding: Optional[np.ndarray],
         output_wav_path: Path,
         pitch_shift_semitones: float = 0.0,
+        target_envelope: Optional[np.ndarray] = None,
     ) -> Path:
         """Apply acoustic formant and spectral resonance transfer from target embedding to source speech."""
         audio, sr = sf.read(str(source_wav_path), dtype="float32")
@@ -124,9 +129,8 @@ class VoiceCloningEngine:
             audio = np.mean(audio, axis=1)
 
         # If neural converter is available, evaluate neural graph
-        if self._converter_session is not None:
+        if self._converter_session is not None and target_embedding is not None:
             try:
-                # OpenVoice ONNX style inference
                 inputs = {
                     self._converter_session.get_inputs()[0].name: np.expand_dims(audio, axis=0).astype(np.float32),
                     self._converter_session.get_inputs()[1].name: np.expand_dims(target_embedding, axis=0).astype(np.float32),
@@ -137,45 +141,43 @@ class VoiceCloningEngine:
             except Exception as e:
                 logger.warning("Neural converter error, using acoustic formant transfer: %s", e)
 
-        # High-Fidelity Formant Transfer DSP
-        # 1. Extract spectral characteristics from target embedding
-        # Target embedding first 80 values correspond to mel-frequency distribution
-        mel_profile = target_embedding[:80]
-        # Normalize mel profile to zero-mean adjustment
-        eq_curve = mel_profile - np.mean(mel_profile)
+        # High-Fidelity Formant & Pitch Transfer DSP
+        # 1. Pitch shift using Phase Vocoder without altering tempo or duration
+        if abs(pitch_shift_semitones) > 0.15:
+            audio = AudioDSP.pitch_shift_pv(audio, pitch_shift_semitones, sr=sr)
 
-        # 2. Reshape frequency response using 10-band octave equalizer filterbank
-        freq_bands = [100, 250, 500, 1000, 2000, 3000, 4500, 6000, 8000]
-        processed = audio.copy()
+        # 2. Reshape frequency response to match user vocal tract spectral envelope
+        if target_envelope is not None:
+            source_env = AudioDSP.extract_spectral_envelope(audio, sr=sr)
+            audio = AudioDSP.apply_spectral_envelope_transfer(
+                source_audio=audio,
+                target_env=target_envelope,
+                source_env=source_env,
+                sr=sr,
+                strength=0.85,
+            )
+        elif target_embedding is not None and len(target_embedding) >= 80:
+            # Fallback envelope from embedding mel energy distribution
+            mel_profile = target_embedding[:80]
+            eq_curve = (mel_profile - np.mean(mel_profile)) * 20.0  # Scale appropriately
+            freq_bands = [100, 250, 500, 1000, 2000, 3000, 4500, 6000, 8000]
+            for idx, center_freq in enumerate(freq_bands):
+                if center_freq >= sr / 2:
+                    break
+                emb_idx = min(len(eq_curve) - 1, int((center_freq / 8000.0) * len(eq_curve)))
+                gain_db = float(np.clip(eq_curve[emb_idx], -6.0, 6.0))
+                if abs(gain_db) > 0.2:
+                    q = 1.4
+                    w0 = center_freq / (sr / 2)
+                    bw = w0 / q
+                    low = max(0.01, w0 - bw / 2)
+                    high = min(0.99, w0 + bw / 2)
+                    sos = scipy.signal.butter(2, [low, high], btype="bandpass", output="sos")
+                    band_signal = scipy.signal.sosfilt(sos, audio)
+                    linear_gain = 10.0 ** (gain_db / 20.0) - 1.0
+                    audio += (band_signal * linear_gain).astype(np.float32)
 
-        for idx, center_freq in enumerate(freq_bands):
-            if center_freq >= sr / 2:
-                break
-            # Calculate gain from embedding band
-            emb_idx = min(len(eq_curve) - 1, int((center_freq / 8000.0) * len(eq_curve)))
-            gain_db = float(np.clip(eq_curve[emb_idx] * 2.5, -4.5, 4.5))
-
-            if abs(gain_db) > 0.3:
-                q = 1.4
-                w0 = center_freq / (sr / 2)
-                bw = w0 / q
-                low = max(0.01, w0 - bw / 2)
-                high = min(0.99, w0 + bw / 2)
-                sos = scipy.signal.butter(2, [low, high], btype="bandpass", output="sos")
-                band_signal = scipy.signal.sosfilt(sos, audio)
-                linear_gain = 10.0 ** (gain_db / 20.0) - 1.0
-                processed += (band_signal * linear_gain).astype(np.float32)
-
-        # 3. Subtle pitch shift if specified
-        if abs(pitch_shift_semitones) > 0.1:
-            ratio = 2.0 ** (pitch_shift_semitones / 12.0)
-            target_len = int(len(processed) / ratio)
-            if target_len > 0:
-                resampled = scipy.signal.resample(processed, target_len)
-                # Resample back to preserve tempo
-                processed = scipy.signal.resample(resampled, len(processed))
-
-        # 4. Peak normalize and write 16-bit PCM WAV
-        final_audio = AudioDSP.normalize_peak(processed, target_db=-1.0)
+        # 3. Peak normalize and write 16-bit PCM WAV
+        final_audio = AudioDSP.normalize_peak(audio, target_db=-1.0)
         sf.write(str(output_wav_path), final_audio, sr, subtype="PCM_16")
         return output_wav_path

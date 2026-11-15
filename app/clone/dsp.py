@@ -233,3 +233,171 @@ class AudioDSP:
         mel_spec = np.dot(fb, mag_spec[: n_fft // 2 + 1, :])
         log_mel = np.log(np.maximum(mel_spec, 1e-5))
         return log_mel.astype(np.float32)
+
+    @classmethod
+    def estimate_median_f0(cls, audio: np.ndarray, sr: int) -> float:
+        """Estimate median fundamental pitch (F0 in Hz) using autocorrelation across voiced speech frames."""
+        if len(audio) == 0:
+            return 140.0
+
+        # Resample to 16kHz for uniform, robust pitch tracking
+        if sr != 16000:
+            new_len = int(len(audio) * 16000 / sr)
+            audio = cls.resample_audio(audio, sr, 16000)
+            sr = 16000
+
+        frame_len = int(sr * 0.04)  # 40ms frame
+        hop_len = int(sr * 0.02)    # 20ms hop
+        min_lag = int(sr / 380)     # up to 380 Hz (female/child high pitch)
+        max_lag = int(sr / 75)      # down to 75 Hz (deep bass male pitch)
+
+        pitches = []
+        for start in range(0, len(audio) - frame_len, hop_len):
+            frame = audio[start : start + frame_len]
+            rms = np.sqrt(np.mean(frame**2))
+            if rms < 0.015:  # Skip unvoiced/silent frames
+                continue
+
+            corr = scipy.signal.correlate(frame, frame, mode="full")
+            corr = corr[len(corr) // 2 :]
+            if len(corr) < max_lag:
+                continue
+
+            lag_slice = corr[min_lag:max_lag]
+            best_lag = min_lag + int(np.argmax(lag_slice))
+            # Voicing confidence check (peak should be prominent compared to zero-lag)
+            if corr[best_lag] > 0.32 * corr[0]:
+                f0 = sr / float(best_lag)
+                if 75.0 <= f0 <= 380.0:
+                    pitches.append(f0)
+
+        if not pitches:
+            return 140.0
+        return float(np.median(pitches))
+
+    @staticmethod
+    def time_stretch_phase_vocoder(
+        audio: np.ndarray,
+        rate: float,
+        n_fft: int = 1024,
+        hop: int = 256,
+    ) -> np.ndarray:
+        """Time-stretch audio using a fast Phase Vocoder in pure NumPy/SciPy without changing pitch."""
+        if abs(rate - 1.0) < 0.01 or len(audio) < n_fft:
+            return audio
+
+        window = np.hanning(n_fft)
+        f, t, Zxx = scipy.signal.stft(audio, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+        mag = np.abs(Zxx)
+        phase = np.angle(Zxx)
+
+        new_time_steps = np.arange(0, Zxx.shape[1] - 1, rate)
+        if len(new_time_steps) == 0:
+            return audio
+
+        phase_adv = np.linspace(0, np.pi * hop, n_fft // 2 + 1)
+        new_phase = np.zeros((Zxx.shape[0], len(new_time_steps)), dtype=np.float64)
+        new_mag = np.zeros_like(new_phase)
+
+        current_phase = phase[:, 0].astype(np.float64)
+        for i, t_idx in enumerate(new_time_steps):
+            left = int(np.floor(t_idx))
+            right = min(left + 1, Zxx.shape[1] - 1)
+            w = t_idx - left
+            new_mag[:, i] = (1.0 - w) * mag[:, left] + w * mag[:, right]
+
+            dphase = phase[:, right] - phase[:, left] - phase_adv
+            dphase = dphase - 2.0 * np.pi * np.round(dphase / (2.0 * np.pi))
+            current_phase += phase_adv + dphase
+            new_phase[:, i] = current_phase
+
+        Z_new = (new_mag * np.exp(1j * new_phase)).astype(np.complex64)
+        _, x_stretched = scipy.signal.istft(Z_new, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+        return x_stretched.astype(np.float32)
+
+    @classmethod
+    def pitch_shift_pv(cls, audio: np.ndarray, semitones: float, sr: int = 22050) -> np.ndarray:
+        """Shift pitch in semitones without modifying duration or speech tempo."""
+        if abs(semitones) < 0.15 or len(audio) < 1024:
+            return audio
+
+        factor = 2.0 ** (semitones / 12.0)
+        # 1. Resample waveform (changes both pitch and duration by 1/factor)
+        target_len = max(64, int(len(audio) / factor))
+        resampled = scipy.signal.resample(audio, target_len).astype(np.float32)
+
+        # 2. Phase-vocoder time-stretch back to original length
+        stretched = cls.time_stretch_phase_vocoder(resampled, 1.0 / factor)
+
+        # 3. Match exact sample count
+        if len(stretched) > len(audio):
+            return stretched[: len(audio)]
+        elif len(stretched) < len(audio):
+            return np.pad(stretched, (0, len(audio) - len(stretched)))
+        return stretched
+
+    @staticmethod
+    def extract_spectral_envelope(
+        audio: np.ndarray,
+        sr: int = 22050,
+        n_fft: int = 1024,
+        hop: int = 256,
+        smoothing_sigma: float = 6.0,
+    ) -> np.ndarray:
+        """Extract a smooth vocal-tract spectral envelope from voiced frames."""
+        if len(audio) < n_fft:
+            return np.ones(n_fft // 2 + 1, dtype=np.float32)
+
+        window = np.hanning(n_fft)
+        _, _, Zxx = scipy.signal.stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+        mag = np.abs(Zxx)
+
+        frame_energy = np.mean(mag, axis=0)
+        thresh = np.percentile(frame_energy, 25)
+        voiced_mag = mag[:, frame_energy > thresh]
+        if voiced_mag.shape[1] == 0:
+            voiced_mag = mag
+
+        avg_spectrum = np.mean(voiced_mag, axis=1)
+        log_spec = np.log1p(np.maximum(0, avg_spectrum))
+
+        # Gaussian smoothing across frequency bins to isolate broad formant peaks
+        from scipy.ndimage import gaussian_filter1d
+
+        smooth_env = gaussian_filter1d(log_spec, sigma=smoothing_sigma)
+        return smooth_env.astype(np.float32)
+
+    @staticmethod
+    def apply_spectral_envelope_transfer(
+        source_audio: np.ndarray,
+        target_env: np.ndarray,
+        source_env: np.ndarray,
+        sr: int = 22050,
+        n_fft: int = 1024,
+        hop: int = 256,
+        strength: float = 0.85,
+    ) -> np.ndarray:
+        """Reshape source audio harmonics to match target speaker's vocal tract envelope."""
+        if len(source_audio) < n_fft or len(target_env) != len(source_env):
+            return source_audio
+
+        diff_log = target_env - source_env
+        diff_log = diff_log - np.mean(diff_log)
+        transfer_gain = np.exp(strength * diff_log)
+
+        # Clamp gain between -12dB and +12dB to preserve natural dynamics
+        transfer_gain = np.clip(transfer_gain, 0.25, 4.0).astype(np.float32)
+
+        window = np.hanning(n_fft)
+        _, _, Zxx = scipy.signal.stft(source_audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+
+        Zxx_morphed = (Zxx * transfer_gain[:, np.newaxis]).astype(np.complex64)
+        _, morphed = scipy.signal.istft(Zxx_morphed, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+
+        if len(morphed) > len(source_audio):
+            morphed = morphed[: len(source_audio)]
+        elif len(morphed) < len(source_audio):
+            morphed = np.pad(morphed, (0, len(source_audio) - len(morphed)))
+
+        return morphed.astype(np.float32)
+

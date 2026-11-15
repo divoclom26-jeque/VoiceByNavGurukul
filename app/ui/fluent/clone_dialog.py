@@ -35,6 +35,7 @@ from qfluentwidgets import (
     ProgressBar,
     PushButton,
     SegmentedWidget,
+    Slider,
     SubtitleLabel,
     ToolButton,
 )
@@ -177,6 +178,24 @@ class CloneVoiceDialog(QDialog):
         col_base.addWidget(self.combo_base_voice)
         row_meta.addLayout(col_base, stretch=1)
         card_layout.addLayout(row_meta)
+
+        # Acoustic Voice Tuning (Pitch Shift)
+        card_layout.addSpacing(4)
+        pitch_box = QVBoxLayout()
+        pitch_header = QHBoxLayout()
+        pitch_header.addWidget(CaptionLabel("Acoustic Pitch Shift (Semitones):", self))
+        pitch_header.addStretch()
+        self.lbl_pitch_val = CaptionLabel("Auto-Match (0.0 st)", self)
+        self.lbl_pitch_val.setStyleSheet("color: #0284C7; font-weight: 600;")
+        pitch_header.addWidget(self.lbl_pitch_val)
+        pitch_box.addLayout(pitch_header)
+
+        self.slider_pitch = Slider(Qt.Orientation.Horizontal, self)
+        self.slider_pitch.setRange(-12, 12)
+        self.slider_pitch.setValue(0)
+        self.slider_pitch.valueChanged.connect(self._on_pitch_slider_changed)
+        pitch_box.addWidget(self.slider_pitch)
+        card_layout.addLayout(pitch_box)
 
         main_layout.addWidget(settings_card)
 
@@ -498,10 +517,13 @@ class CloneVoiceDialog(QDialog):
         self.txt_file.setText(p.name)
         self._validate_and_set_sample(p, from_mic=False)
 
+    def _on_pitch_slider_changed(self, val: int):
+        self.lbl_pitch_val.setText(f"{val:+.1f} st")
+
     def _validate_and_set_sample(self, path: Path, from_mic: bool = True):
         try:
-            info = sf.info(str(path))
-            dur = info.duration
+            data, sr = sf.read(str(path), dtype="float32")
+            dur = len(data) / float(sr)
             if dur < self.MIN_RECORDING_SECONDS:
                 msg = f"⚠️ Audio is too short ({dur:.1f}s). Please provide at least 3-5 seconds of speech."
                 if from_mic:
@@ -515,7 +537,23 @@ class CloneVoiceDialog(QDialog):
                 self.btn_save.setEnabled(False)
                 self.btn_test.setEnabled(False)
             else:
-                msg = f"✓ Valid speech sample: {dur:.1f}s · {info.samplerate} Hz · Ready to clone!"
+                import math
+                user_f0 = AudioDSP.estimate_median_f0(data, sr)
+                base_key = self.combo_base_voice.currentData() or "hi_IN-pratham-medium"
+                base_f0_map = {
+                    "hi_IN-pratham-medium": 107.0,
+                    "hi_IN-priyamvada-medium": 220.0,
+                    "en_US-lessac-medium": 140.0,
+                    "en_US-ryan-medium": 115.0,
+                    "en_US-amy-medium": 215.0,
+                }
+                nominal_f0 = base_f0_map.get(base_key, 120.0)
+                auto_shift = int(round(12.0 * math.log2(user_f0 / nominal_f0)))
+                auto_shift = max(-12, min(12, auto_shift))
+                self.slider_pitch.setValue(auto_shift)
+                self.lbl_pitch_val.setText(f"{auto_shift:+.1f} st (Auto-detected: {user_f0:.0f} Hz)")
+
+                msg = f"✓ Valid speech sample: {dur:.1f}s · Detected Pitch: {user_f0:.0f} Hz · Ready to clone!"
                 if from_mic:
                     self.lbl_mic_status.setText(msg)
                     self.lbl_mic_status.setStyleSheet("color: #16A34A; font-weight: 600;")
@@ -549,6 +587,7 @@ class CloneVoiceDialog(QDialog):
         name = self.txt_name.text().strip() or "My Cloned Voice"
         lang = self.combo_lang.currentData() or "hi_IN"
         base_voice = self.combo_base_voice.currentData() or "hi_IN-pratham-medium"
+        pitch_shift = float(self.slider_pitch.value())
 
         self.btn_save.setEnabled(False)
         self.btn_record.setEnabled(False)
@@ -564,6 +603,7 @@ class CloneVoiceDialog(QDialog):
                 reference_audio_path=self.selected_sample_path,
                 language=lang,
                 base_voice_key=base_voice,
+                pitch_shift=pitch_shift,
             )
             self.clone_progress.setValue(100)
             self.lbl_clone_status.setText("Voice profile created successfully!")
@@ -591,6 +631,7 @@ class CloneVoiceDialog(QDialog):
         name = self.txt_name.text().strip() or "Test Voice"
         lang = self.combo_lang.currentData() or "hi_IN"
         base_voice = self.combo_base_voice.currentData() or "hi_IN-pratham-medium"
+        pitch_shift = float(self.slider_pitch.value())
 
         try:
             temp_profile = self.clone_manager.create_clone(
@@ -598,6 +639,7 @@ class CloneVoiceDialog(QDialog):
                 reference_audio_path=self.selected_sample_path,
                 language=lang,
                 base_voice_key=base_voice,
+                pitch_shift=pitch_shift,
             )
 
             test_text = (

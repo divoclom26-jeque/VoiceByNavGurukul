@@ -61,6 +61,21 @@ def test_audio_dsp_processing(tmp_path: Path):
     assert mel.shape[0] == 80
     assert mel.shape[1] > 10
 
+    # Verify F0 estimation
+    f0 = AudioDSP.estimate_median_f0(data, sr=sr)
+    assert 100.0 <= f0 <= 220.0  # Synthetic speech has pitch in human voice range
+
+    # Verify pitch shift phase vocoder
+    shifted = AudioDSP.pitch_shift_pv(data, semitones=4.0, sr=sr)
+    assert len(shifted) == len(data)
+    assert np.max(np.abs(shifted)) > 0.1
+
+    # Verify spectral envelope extraction and transfer
+    env = AudioDSP.extract_spectral_envelope(data, sr=sr)
+    assert len(env) == 1024 // 2 + 1
+    morphed = AudioDSP.apply_spectral_envelope_transfer(data, env, env, sr=sr)
+    assert len(morphed) == len(data)
+
 
 def test_speaker_encoder_embeddings():
     encoder = SpeakerEncoder()
