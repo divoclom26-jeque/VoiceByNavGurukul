@@ -167,16 +167,21 @@ class StudioInterface(QWidget):
     def _populate_voices(self):
         self.combo_voices.clear()
         voices = list_local_voices()
-        for v in voices:
+        sorted_voices = sorted(
+            voices,
+            key=lambda x: (not x.get("language", "").startswith("hi"), x.get("name", "")),
+        )
+        for v in sorted_voices:
             lang = v.get("language", "en")
             flag = "🇮🇳" if lang.startswith("hi") else "🇺🇸"
-            self.combo_voices.addItem(f"{flag} {v['name']} ({lang})", v["key"])
+            self.combo_voices.addItem(f"{flag} {v['name']} ({lang})", userData=v["key"])
 
         if not voices:
-            self.combo_voices.addItem("No voice installed (Visit Gallery)", None)
+            self.combo_voices.addItem("No voice installed (Visit Gallery)", userData=None)
             self.btn_generate.setEnabled(False)
             self.btn_test.setEnabled(False)
         else:
+            self.combo_voices.setCurrentIndex(0)
             self.btn_generate.setEnabled(True)
             self.btn_test.setEnabled(True)
 
@@ -247,6 +252,12 @@ class StudioInterface(QWidget):
             engine = PiperTTSEngine()
             engine.synthesize_to_wav(sample_text, test_wav, voice_cfg)
             self.test_voice_requested.emit(str(test_wav), f"Sample: {voice_key}")
+            InfoBar.success(
+                title="Voice Preview Ready 🎧",
+                content=f"Playing sample for {voice_key}",
+                parent=self,
+                position=InfoBarPosition.TOP,
+            )
         except Exception as e:
             InfoBar.error(title="Test Failed", content=str(e), parent=self, position=InfoBarPosition.TOP)
 

@@ -105,22 +105,34 @@ class FluentMainWindow(FluentWindow):
         # Studio synthesis completed -> load into player & pass to block/mixer views
         self.studio_interface.synthesis_completed.connect(self._on_synthesis_completed)
         self.studio_interface.test_voice_requested.connect(
-            lambda audio_path, title: self.player_bar.load_audio(audio_path, title=title)
+            lambda audio_path, title: (
+                self.player_bar.load_audio(audio_path, title=title),
+                self.player_bar.play(),
+            )
         )
 
         # Block interface playback
         self.block_interface.play_audio_requested.connect(
-            lambda audio_path, title: self.player_bar.load_audio(audio_path, title=title)
+            lambda audio_path, title: (
+                self.player_bar.load_audio(audio_path, title=title),
+                self.player_bar.play(),
+            )
         )
 
         # Mixer interface playback
         self.mixer_interface.play_audio_requested.connect(
-            lambda audio_path, title: self.player_bar.load_audio(audio_path, title=title)
+            lambda audio_path, title: (
+                self.player_bar.load_audio(audio_path, title=title),
+                self.player_bar.play(),
+            )
         )
 
         # Projects library interactions
         self.projects_interface.play_audio_requested.connect(
-            lambda audio_path, title: self.player_bar.load_audio(audio_path, title=title)
+            lambda audio_path, title: (
+                self.player_bar.load_audio(audio_path, title=title),
+                self.player_bar.play(),
+            )
         )
         self.projects_interface.load_project_requested.connect(self._on_load_project_from_library)
 
