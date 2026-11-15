@@ -258,6 +258,11 @@ def cmd_gui(args):
     app.setApplicationName("Voice Studio AI")
     app.setOrganizationName("NavGurukul")
 
+    icon_path = Path(__file__).parent / "assets" / "icon.png"
+    if icon_path.is_file():
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

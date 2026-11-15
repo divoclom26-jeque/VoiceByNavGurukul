@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Voice Studio AI
+GenericName=Local Text-to-Voice Audio Studio
+Comment=High-performance, private, offline-capable voice synthesis & audiobook production
+Exec=bash -c 'cd "$(dirname "%k")" && ./run_dev.sh'
+Icon=assets/icon.png
+Terminal=false
+Categories=AudioVideo;Audio;AudioVideoEditing;
+Keywords=tts;voice;speech;audiobook;podcast;piper;ai;
+StartupNotify=true
+StartupWMClass=Voice Studio AI
