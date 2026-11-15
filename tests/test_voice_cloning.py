@@ -169,13 +169,40 @@ def test_clone_voice_dialog_ui(qapp, tmp_path: Path):
     assert dlg.windowTitle() == "Clone AI Voice Profile"
     assert not dlg.btn_save.isEnabled()
 
-    # Feed valid sample
+    # Mic controls exist
+    assert hasattr(dlg, "btn_record")
+    assert hasattr(dlg, "btn_play_record")
+    assert hasattr(dlg, "lbl_record_timer")
+    assert hasattr(dlg, "combo_mics")
+
+    # Script prompt adapts to language
+    dlg.combo_lang.setCurrentIndex(0)  # Hindi
+    assert "नमस्ते" in dlg.lbl_script_prompt.text()
+    dlg.combo_lang.setCurrentIndex(1)  # English
+    assert "Hello" in dlg.lbl_script_prompt.text()
+
+    # Feed short sample (< 2.0s)
+    short_wav = tmp_path / "short.wav"
+    create_mock_speech_wav(short_wav, duration_sec=1.0)
+    dlg._validate_and_set_sample(short_wav, from_mic=True)
+    assert not dlg.btn_save.isEnabled()
+    assert "too short" in dlg.lbl_mic_status.text()
+
+    # Feed valid sample (>= 2.0s)
     sample_wav = tmp_path / "valid_sample.wav"
     create_mock_speech_wav(sample_wav, duration_sec=4.0)
 
-    dlg.selected_sample_path = sample_wav
-    dlg.btn_save.setEnabled(True)
+    dlg._validate_and_set_sample(sample_wav, from_mic=True)
     assert dlg.btn_save.isEnabled()
+    assert dlg.btn_test.isEnabled()
+    assert dlg.btn_play_record.isEnabled()
+    assert dlg.selected_sample_path == sample_wav
+
+    # Test tab switching
+    dlg._switch_input_method(1)  # File mode
+    assert dlg.stacked_input.currentIndex() == 1
+    dlg._switch_input_method(0)  # Mic mode
+    assert dlg.stacked_input.currentIndex() == 0
 
     dlg.deleteLater()
     qapp.processEvents()
