@@ -317,24 +317,104 @@ class AudioDSP:
 
     @classmethod
     def pitch_shift_pv(cls, audio: np.ndarray, semitones: float, sr: int = 22050) -> np.ndarray:
-        """Shift pitch in semitones without modifying duration or speech tempo."""
+        """Shift pitch in semitones using SOLA period-synchronous overlap-add to prevent metallic phase artifacts."""
+        if abs(semitones) < 0.15 or len(audio) < 1024:
+            return audio
+        return cls.pitch_shift_sola(audio, semitones, sr)
+
+    @classmethod
+    def pitch_shift_sola(cls, audio: np.ndarray, semitones: float, sr: int = 22050) -> np.ndarray:
+        """High-Fidelity Synchronous Overlap-Add (SOLA) pitch shifting without phase smearing or metallic artifacts."""
         if abs(semitones) < 0.15 or len(audio) < 1024:
             return audio
 
         factor = 2.0 ** (semitones / 12.0)
-        # 1. Resample waveform (changes both pitch and duration by 1/factor)
         target_len = max(64, int(len(audio) / factor))
         resampled = scipy.signal.resample(audio, target_len).astype(np.float32)
 
-        # 2. Phase-vocoder time-stretch back to original length
-        stretched = cls.time_stretch_phase_vocoder(resampled, 1.0 / factor)
+        win_len = int(sr * 0.035)   # 35ms window
+        hop_out = int(sr * 0.015)   # 15ms output hop
+        hop_in = max(1, int(hop_out * factor))
 
-        # 3. Match exact sample count
-        if len(stretched) > len(audio):
-            return stretched[: len(audio)]
-        elif len(stretched) < len(audio):
-            return np.pad(stretched, (0, len(audio) - len(stretched)))
-        return stretched
+        if hop_in <= 0 or win_len <= 0 or len(resampled) < win_len:
+            return audio
+
+        num_hops = int(np.ceil((len(audio) - win_len) / hop_out)) + 1
+        output = np.zeros(num_hops * hop_out + win_len, dtype=np.float32)
+        norm = np.zeros_like(output)
+        window = np.hanning(win_len).astype(np.float32)
+
+        delta_max = int(sr * 0.006)  # 6ms search range for period alignment
+        in_pos = 0
+        out_pos = 0
+        prev_grain = np.zeros(win_len, dtype=np.float32)
+
+        for h in range(num_hops):
+            best_pos = in_pos
+            if h > 0 and in_pos + win_len + delta_max < len(resampled) and in_pos - delta_max >= 0:
+                corr = np.correlate(
+                    resampled[in_pos - delta_max : in_pos + win_len + delta_max],
+                    prev_grain,
+                    mode="valid",
+                )
+                best_pos = in_pos - delta_max + int(np.argmax(corr))
+
+            grain_end = min(best_pos + win_len, len(resampled))
+            grain = resampled[best_pos:grain_end]
+            if len(grain) < win_len:
+                grain = np.pad(grain, (0, win_len - len(grain)))
+
+            output[out_pos : out_pos + win_len] += grain * window
+            norm[out_pos : out_pos + win_len] += window
+            prev_grain = grain
+
+            in_pos += hop_in
+            out_pos += hop_out
+            if in_pos + win_len >= len(resampled):
+                break
+
+        norm = np.maximum(norm, 1e-4)
+        result = output / norm
+        if len(result) > len(audio):
+            result = result[: len(audio)]
+        elif len(result) < len(audio):
+            result = np.pad(result, (0, len(audio) - len(result)))
+        return result.astype(np.float32)
+
+    @classmethod
+    def vtln_warp_spectrum(cls, audio: np.ndarray, alpha: float, sr: int = 22050, n_fft: int = 1024, hop: int = 256) -> np.ndarray:
+        """Vocal Tract Length Normalization (VTLN) frequency axis warping to adapt vowel formant positions."""
+        if abs(alpha - 1.0) < 0.02 or len(audio) < n_fft:
+            return audio
+
+        window = np.hanning(n_fft)
+        _, _, Zxx = scipy.signal.stft(audio, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+        n_bins = Zxx.shape[0]
+        freqs = np.linspace(0, sr / 2, n_bins)
+        f_knee = sr / 4.0
+
+        warped_freqs = np.zeros_like(freqs)
+        for i, f in enumerate(freqs):
+            if f <= f_knee:
+                warped_freqs[i] = f * alpha
+            else:
+                warped_freqs[i] = alpha * f_knee + ((sr / 2.0 - alpha * f_knee) / (sr / 2.0 - f_knee)) * (f - f_knee)
+
+        warped_indices = np.clip(warped_freqs / (sr / 2.0) * (n_bins - 1), 0, n_bins - 1)
+        warped_Zxx = np.zeros_like(Zxx)
+
+        for t in range(Zxx.shape[1]):
+            mag = np.abs(Zxx[:, t])
+            phase = np.angle(Zxx[:, t])
+            warped_mag = np.interp(np.arange(n_bins), warped_indices, mag)
+            warped_Zxx[:, t] = warped_mag * np.exp(1j * phase)
+
+        _, warped_audio = scipy.signal.istft(warped_Zxx, fs=sr, nperseg=n_fft, noverlap=n_fft - hop, window=window)
+        if len(warped_audio) > len(audio):
+            warped_audio = warped_audio[: len(audio)]
+        elif len(warped_audio) < len(audio):
+            warped_audio = np.pad(warped_audio, (0, len(audio) - len(warped_audio)))
+        return warped_audio.astype(np.float32)
 
     @staticmethod
     def extract_spectral_envelope(

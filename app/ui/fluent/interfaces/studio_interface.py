@@ -374,9 +374,10 @@ class StudioInterface(QWidget):
         test_dir.mkdir(parents=True, exist_ok=True)
         test_wav = test_dir / f"test_{voice_key}.wav"
 
+        is_hindi = voice_key.startswith("hi") or voice_cfg.get("language", "").startswith("hi")
         sample_text = (
             "नमस्ते! यह आपकी चुनी हुई आवाज़ का नमूना है।"
-            if voice_key.startswith("hi")
+            if is_hindi
             else "Hello! This is a real-time sample of the selected voice."
         )
 

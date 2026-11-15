@@ -142,11 +142,15 @@ class VoiceCloningEngine:
                 logger.warning("Neural converter error, using acoustic formant transfer: %s", e)
 
         # High-Fidelity Formant & Pitch Transfer DSP
-        # 1. Pitch shift using Phase Vocoder without altering tempo or duration
+        # 1. Pitch shift using SOLA cross-correlation (zero phase smearing)
         if abs(pitch_shift_semitones) > 0.15:
             audio = AudioDSP.pitch_shift_pv(audio, pitch_shift_semitones, sr=sr)
+            # 2. Vocal Tract Length Normalization (VTLN) to scale vowel formants with pitch
+            vtln_alpha = float(np.clip(2.0 ** ((pitch_shift_semitones / 12.0) * 0.35), 0.85, 1.20))
+            if abs(vtln_alpha - 1.0) > 0.02:
+                audio = AudioDSP.vtln_warp_spectrum(audio, vtln_alpha, sr=sr)
 
-        # 2. Reshape frequency response to match user vocal tract spectral envelope
+        # 3. Reshape frequency response to match user vocal tract spectral envelope
         if target_envelope is not None:
             source_env = AudioDSP.extract_spectral_envelope(audio, sr=sr)
             audio = AudioDSP.apply_spectral_envelope_transfer(
@@ -154,7 +158,7 @@ class VoiceCloningEngine:
                 target_env=target_envelope,
                 source_env=source_env,
                 sr=sr,
-                strength=0.85,
+                strength=0.88,
             )
         elif target_embedding is not None and len(target_embedding) >= 80:
             # Fallback envelope from embedding mel energy distribution
