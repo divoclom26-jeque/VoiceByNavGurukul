@@ -12,5 +12,10 @@ if [ ! -d ".venv" ]; then
     uv pip install --python .venv -r requirements.txt
 fi
 
+if [ ! -d "frontend/dist" ]; then
+    echo "[*] Building modern React frontend..."
+    cd frontend && npm install && npm run build && cd ..
+fi
+
 source .venv/bin/activate
 python main.py "$@"

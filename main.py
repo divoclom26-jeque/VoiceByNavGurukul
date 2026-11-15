@@ -245,27 +245,80 @@ def cmd_list_projects(args):
 
 
 def cmd_gui(args):
-    """Launch the PySide6 Desktop GUI."""
+    """Launch the modern Studio Desktop App (React + Tailwind + Native WebView)."""
+    import threading
+    import time
+    import webbrowser
+    import uvicorn
+    from app.server import app as fastapi_app
+
+    use_legacy = getattr(args, "legacy_qt", False)
+    use_browser = getattr(args, "browser", False)
+    port = getattr(args, "port", 8765)
+
+    if use_legacy:
+        try:
+            from PySide6.QtWidgets import QApplication
+            from app.ui.main_window import MainWindow
+            from PySide6.QtGui import QIcon
+        except ImportError as e:
+            print(f"[!] PySide6 required: {e}")
+            sys.exit(1)
+
+        app = QApplication(sys.argv)
+        app.setApplicationName("Voice Studio AI")
+        app.setOrganizationName("NavGurukul")
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
+        if icon_path.is_file():
+            app.setWindowIcon(QIcon(str(icon_path)))
+        window = MainWindow()
+        window.show()
+        sys.exit(app.exec())
+
+    # Start FastAPI server in background thread
+    def run_server():
+        uvicorn.run(fastapi_app, host="127.0.0.1", port=port, log_level="warning")
+
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    time.sleep(0.8)
+
+    url = f"http://127.0.0.1:{port}"
+    print(f"\n[+] Voice Studio AI Server active at: {url}")
+
+    if use_browser:
+        print("[*] Opening in system web browser...")
+        webbrowser.open(url)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nShutting down server.")
+            sys.exit(0)
+
+    # Launch native desktop window via pywebview
     try:
-        from PySide6.QtWidgets import QApplication
-        from app.ui.main_window import MainWindow
-    except ImportError as e:
-        print(f"[!] PySide6 is required to run the desktop GUI: {e}")
-        print("    Install it via: uv pip install --python .venv PySide6")
-        sys.exit(1)
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("Voice Studio AI")
-    app.setOrganizationName("NavGurukul")
-
-    icon_path = Path(__file__).parent / "assets" / "icon.png"
-    if icon_path.is_file():
-        from PySide6.QtGui import QIcon
-        app.setWindowIcon(QIcon(str(icon_path)))
-
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+        import webview
+        print("[*] Launching Modern Desktop Window...")
+        window = webview.create_window(
+            title="Voice Studio AI — Studio Desktop",
+            url=url,
+            width=1280,
+            height=820,
+            min_size=(960, 640),
+            background_color="#090a0f",
+        )
+        webview.start(gui="qt")
+    except Exception as e:
+        print(f"[!] Native webview fallback: {e}")
+        print(f"[*] Opening in system browser at {url}...")
+        webbrowser.open(url)
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nShutting down server.")
+            sys.exit(0)
 
 
 def main():
@@ -283,7 +336,10 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Command: gui
-    sub_gui = subparsers.add_parser("gui", help="Launch the PySide6 Desktop GUI")
+    sub_gui = subparsers.add_parser("gui", help="Launch the Modern Studio Desktop GUI")
+    sub_gui.add_argument("--browser", action="store_true", help="Open in default web browser instead of native webview")
+    sub_gui.add_argument("--legacy-qt", action="store_true", help="Launch the legacy Qt widget UI")
+    sub_gui.add_argument("--port", type=int, default=8765, help="Port to run server on (default: 8765)")
     sub_gui.set_defaults(func=cmd_gui)
 
     # Command: voices

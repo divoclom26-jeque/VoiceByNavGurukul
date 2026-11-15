@@ -29,6 +29,10 @@ projects/*.m4b
 # Models directory cache
 models/voices/.catalog_cache.json
 
+# Node & Frontend
+frontend/node_modules/
+.DS_Store
+
 # IDE
 .idea/
 .vscode/
