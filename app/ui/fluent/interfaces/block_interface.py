@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
@@ -112,11 +113,11 @@ class BlockInterface(QWidget):
             status_item = QTableWidgetItem(block.status.upper())
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if block.status == "completed":
-                status_item.setForeground(Qt.GlobalColor.green)
+                status_item.setForeground(QColor("#2e7d32"))
             elif block.status == "failed":
-                status_item.setForeground(Qt.GlobalColor.red)
+                status_item.setForeground(QColor("#c62828"))
             else:
-                status_item.setForeground(Qt.GlobalColor.yellow)
+                status_item.setForeground(QColor("#ef6c00"))
             self.table.setItem(row, 1, status_item)
 
             # 2: Text

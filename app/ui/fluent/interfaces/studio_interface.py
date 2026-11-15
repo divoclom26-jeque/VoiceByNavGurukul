@@ -90,7 +90,7 @@ class StudioInterface(QWidget):
 
         # Bottom Metrics
         self.lbl_metrics = CaptionLabel("Words: 0 | Chars: 0 | Est. read: 0s | Blocks: 0", self)
-        self.lbl_metrics.setStyleSheet("color: #a6adc8;")
+        self.lbl_metrics.setStyleSheet("font-weight: 500;")
         editor_layout.addWidget(self.lbl_metrics)
 
         main_layout.addWidget(self.editor_card, stretch=3)

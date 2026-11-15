@@ -41,7 +41,7 @@ class FluentAudioPlayerBar(CardWidget):
         self.lbl_title = BodyLabel("No audio loaded", self)
         self.lbl_title.setStyleSheet("font-weight: 600;")
         self.lbl_time = CaptionLabel("00:00 / 00:00", self)
-        self.lbl_time.setStyleSheet("color: #a6adc8; font-family: monospace;")
+        self.lbl_time.setStyleSheet("font-family: monospace; font-weight: 500;")
         top_row.addWidget(self.lbl_title)
         top_row.addStretch()
         top_row.addWidget(self.lbl_time)

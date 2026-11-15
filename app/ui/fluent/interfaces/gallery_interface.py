@@ -137,7 +137,7 @@ class GalleryInterface(QWidget):
 
             if key in installed_keys:
                 lbl_done = CaptionLabel("✓ Installed")
-                lbl_done.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+                lbl_done.setStyleSheet("color: #2e7d32; font-weight: bold;")
                 lbl_done.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setCellWidget(row, 4, lbl_done)
             else:

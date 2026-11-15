@@ -148,6 +148,16 @@ def test_fluent_main_window_full_integration(qapp, tmp_path: Path):
     window.switchTo(window.studio_interface)
     assert window.stackedWidget.currentWidget() == window.studio_interface
 
+    # Test theme toggle
+    from qfluentwidgets import isDarkTheme
+    assert not isDarkTheme()
+    assert window.theme_btn.text() == "Dark Mode"
+    window._toggle_theme()
+    assert isDarkTheme()
+    assert window.theme_btn.text() == "Light Mode"
+    window._toggle_theme()
+    assert not isDarkTheme()
+
     # Test synthesis completed signal flow
     dummy_wav = tmp_path / "output_master.wav"
     import wave

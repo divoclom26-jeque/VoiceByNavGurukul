@@ -9,6 +9,7 @@ from qfluentwidgets import (
     FluentWindow,
     NavigationItemPosition,
     Theme,
+    isDarkTheme,
     setTheme,
 )
 
@@ -30,8 +31,8 @@ class FluentMainWindow(FluentWindow):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
-        # 1. Apply Dark Fluent theme
-        setTheme(Theme.DARK)
+        # 1. Apply Modern Light Fluent theme by default
+        setTheme(Theme.LIGHT)
 
         # 2. Window Configuration
         self.setWindowTitle("Voice Studio AI — Fluent Studio")
@@ -75,8 +76,30 @@ class FluentMainWindow(FluentWindow):
             position=NavigationItemPosition.BOTTOM,
         )
 
-        # 6. Connect Inter-Component Signals
+        # 6. Add 1-Click Dark/Light Mode Toggle Switch in Sidebar
+        self.theme_btn = self.navigationInterface.addItem(
+            routeKey="theme_toggle",
+            icon=FluentIcon.CONSTRACT,
+            text="Dark Mode" if not isDarkTheme() else "Light Mode",
+            onClick=self._toggle_theme,
+            selectable=False,
+            position=NavigationItemPosition.BOTTOM,
+            tooltip="Switch between Light and Dark Theme",
+        )
+
+        # 7. Connect Inter-Component Signals
         self._connect_signals()
+
+    def _toggle_theme(self):
+        """Toggle dynamically between Modern Light and Dark theme."""
+        if isDarkTheme():
+            setTheme(Theme.LIGHT)
+            self.theme_btn.setText("Dark Mode")
+            self.theme_btn.setIcon(FluentIcon.CONSTRACT)
+        else:
+            setTheme(Theme.DARK)
+            self.theme_btn.setText("Light Mode")
+            self.theme_btn.setIcon(FluentIcon.BRIGHTNESS)
 
     def _connect_signals(self):
         # Studio synthesis completed -> load into player & pass to block/mixer views
